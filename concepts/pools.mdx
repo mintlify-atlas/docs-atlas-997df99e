@@ -1,0 +1,579 @@
+---
+title: Pools
+description: Understanding lending pools, interest rate mechanics, and liquidity management in Gearbox Protocol V3
+---
+
+Pools are ERC-4626 compliant vaults that accept deposits from liquidity providers and lend funds to credit managers. They implement sophisticated interest rate models and debt management to ensure sustainable lending operations.
+
+## Pool Architecture
+
+Gearbox V3 pools extend the ERC-4626 standard with additional lending functionality:
+
+```solidity
+interface IPoolV3 is IERC4626, IERC20Permit {
+    // Standard ERC-4626 functions for deposits/withdrawals
+    function deposit(uint256 assets, address receiver) 
+        external returns (uint256 shares);
+    
+    function withdraw(uint256 assets, address receiver, address owner) 
+        external returns (uint256 shares);
+    
+    // Gearbox-specific lending functions
+    function lendCreditAccount(uint256 borrowedAmount, address creditAccount) 
+        external;
+    
+    function repayCreditAccount(uint256 repaidAmount, uint256 profit, uint256 loss) 
+        external;
+}
+```
+
+### Pool State Variables
+
+Pools maintain several key state variables for accounting:
+
+```solidity
+// Interest rate and index tracking
+uint128 _baseInterestRate;        // Current rate in RAY
+uint128 _baseInterestIndexLU;     // Index at last update
+uint40 lastBaseInterestUpdate;    // Timestamp of last update
+
+// Quota revenue tracking
+uint96 _quotaRevenue;             // Current quota revenue
+uint40 lastQuotaRevenueUpdate;    // Timestamp of last update
+
+// Liquidity tracking
+uint128 _expectedLiquidityLU;     // Expected liquidity at last update
+
+// Debt management
+DebtParams _totalDebt;            // Aggregate debt params
+```
+
+## ERC-4626 Lending
+
+### Depositing Liquidity
+
+Liquidity providers deposit underlying tokens and receive LP tokens (shares):
+
+```solidity
+// Standard deposit
+function deposit(uint256 assets, address receiver) 
+    external returns (uint256 shares);
+
+// With referral code
+function depositWithReferral(
+    uint256 assets,
+    address receiver,
+    uint256 referralCode
+) external returns (uint256 shares);
+
+// Mint specific shares amount
+function mint(uint256 shares, address receiver) 
+    external returns (uint256 assets);
+
+function mintWithReferral(
+    uint256 shares,
+    address receiver,
+    uint256 referralCode
+) external returns (uint256 assets);
+```
+
+**Share Price Calculation:**
+
+Shares are valued based on the pool's expected liquidity:
+
+```solidity
+// Shares to assets
+assets = shares * expectedLiquidity() / totalSupply();
+
+// Assets to shares  
+shares = assets * totalSupply() / expectedLiquidity();
+```
+
+Where `expectedLiquidity()` includes:
+- Available liquidity in the pool
+- Outstanding debt from all credit managers
+- Accrued interest since last update
+
+<Info>
+The pool uses expected liquidity rather than actual balance to ensure that borrowed funds and accrued interest are reflected in share prices, even though those funds aren't physically in the pool.
+</Info>
+
+### Withdrawing Liquidity
+
+Liquidity providers can withdraw their funds at any time (subject to available liquidity):
+
+```solidity
+// Withdraw assets
+function withdraw(
+    uint256 assets,
+    address receiver,
+    address owner
+) external returns (uint256 shares);
+
+// Redeem shares
+function redeem(
+    uint256 shares,
+    address receiver,
+    address owner
+) external returns (uint256 assets);
+```
+
+**Withdrawal Fee:**
+
+Pools can charge a withdrawal fee to discourage mercenary capital:
+
+```solidity
+uint16 public withdrawFee;  // In basis points (bps)
+
+// Fee is deducted from withdrawn amount
+assetsSent = assetsToWithdraw * (10000 - withdrawFee) / 10000;
+```
+
+The fee (up to `MAX_WITHDRAW_FEE`) is sent to the protocol treasury.
+
+## Borrowing Operations
+
+### Lending to Credit Accounts
+
+Only whitelisted credit managers can borrow from the pool:
+
+```solidity
+function lendCreditAccount(
+    uint256 borrowedAmount,
+    address creditAccount
+) external;
+```
+
+**Lending Process:**
+
+1. **Authorization Check**: Verify caller is a registered credit manager
+2. **Debt Limit Check**: Ensure borrowing doesn't exceed limits:
+   ```solidity
+   require(creditManagerBorrowed[msg.sender] + borrowedAmount 
+       <= creditManagerDebtLimit[msg.sender]);
+   require(totalBorrowed() + borrowedAmount <= totalDebtLimit());
+   ```
+3. **Transfer Funds**: Send underlying tokens to the credit account
+4. **Update Accounting**: Increment borrowed amounts
+5. **Update Interest**: Recalculate base interest rate based on new utilization
+
+**Debt Tracking:**
+
+```solidity
+struct DebtParams {
+    uint128 borrowed;  // Current amount borrowed
+    uint128 limit;     // Maximum borrowing limit
+}
+
+// Per credit manager
+mapping(address => DebtParams) internal _creditManagerDebt;
+
+// Aggregate across all managers
+DebtParams internal _totalDebt;
+```
+
+<Note>
+Each credit manager has its own debt limit, and there's also a global total debt limit. Both must be respected when borrowing.
+</Note>
+
+### Repaying Debt
+
+When credit accounts repay debt or are liquidated, the pool receives repayment:
+
+```solidity
+function repayCreditAccount(
+    uint256 repaidAmount,
+    uint256 profit,
+    uint256 loss
+) external;
+```
+
+**Parameters:**
+- `repaidAmount`: Total amount being repaid (including profit)
+- `profit`: DAO fees and interest earned above debt principal
+- `loss`: Unrecoverable debt (bad debt)
+
+**Repayment Process:**
+
+1. **Receive Funds**: Transfer `repaidAmount` from credit manager
+2. **Handle Profit**: Profit stays in the pool, increasing LP value
+3. **Handle Loss**: Attempt to cover loss by burning treasury shares
+   ```solidity
+   uint256 treasuryShares = balanceOf(treasury);
+   uint256 sharesToBurn = loss * totalSupply() / expectedLiquidity();
+   
+   if (sharesToBurn <= treasuryShares) {
+       _burn(treasury, sharesToBurn);
+   } else {
+       _burn(treasury, treasuryShares);
+       emit IncurUncoveredLoss(msg.sender, remainingLoss);
+   }
+   ```
+4. **Update Accounting**: Decrement borrowed amounts
+5. **Update Interest**: Recalculate rate based on new utilization
+
+<Warning>
+If treasury shares are insufficient to cover losses, the pool incurs bad debt, which dilutes all LPs proportionally. This is a last resort protection mechanism.
+</Warning>
+
+## Interest Rate Model
+
+### Base Interest Rate
+
+The pool uses an external interest rate model contract:
+
+```solidity
+interface IInterestRateModel {
+    function calcBorrowRate(
+        uint256 expectedLiquidity,
+        uint256 availableLiquidity
+    ) external view returns (uint256);
+}
+```
+
+**Typical Implementation** (LinearInterestRateModelV3):
+
+```solidity
+// Below optimal utilization: linear increase
+if (utilization <= U_optimal) {
+    rate = R_base + (R_slope1 * utilization / U_optimal);
+}
+// Above optimal: steeper linear increase  
+else {
+    rate = R_base + R_slope1 + 
+        (R_slope2 * (utilization - U_optimal) / (1 - U_optimal));
+}
+
+where:
+    utilization = (expectedLiquidity - availableLiquidity) / expectedLiquidity
+```
+
+**Interest Rate Updates:**
+
+The base rate is updated on every borrow, repay, deposit, and withdrawal:
+
+```solidity
+function updateBaseInterest() internal returns (uint256 newBaseInterestRate) {
+    uint256 timestampLU = lastBaseInterestUpdate;
+    if (block.timestamp == timestampLU) return _baseInterestRate;
+    
+    // Update cumulative index
+    uint256 timeElapsed = block.timestamp - timestampLU;
+    uint256 growth = _baseInterestRate * timeElapsed / SECONDS_PER_YEAR;
+    _baseInterestIndexLU = uint128(
+        uint256(_baseInterestIndexLU) * (RAY + growth) / RAY
+    );
+    
+    // Calculate new rate
+    newBaseInterestRate = IInterestRateModel(interestRateModel)
+        .calcBorrowRate(expectedLiquidity(), availableLiquidity());
+    
+    _baseInterestRate = uint128(newBaseInterestRate);
+    lastBaseInterestUpdate = uint40(block.timestamp);
+}
+```
+
+### Cumulative Interest Index
+
+The pool maintains a cumulative index that tracks compounded interest over time:
+
+```solidity
+uint128 internal _baseInterestIndexLU;  // Index at last update
+
+// Index growth calculation
+index_new = index_old * (1 + rate * timeElapsed / SECONDS_PER_YEAR)
+```
+
+This index is used by credit accounts to calculate accrued interest:
+
+```solidity
+accruedInterest = debt * (indexNow / indexLastUpdate - 1)
+```
+
+<Tip>
+The cumulative index approach allows efficient interest calculation without iterating over all accounts. Each account only needs to store its last update index.
+</Tip>
+
+### Supply Rate
+
+The supply rate (rate earned by LPs) differs from the borrow rate:
+
+```solidity
+function supplyRate() external view returns (uint256) {
+    uint256 expectedLiquidity_ = expectedLiquidity();
+    if (expectedLiquidity_ == 0) return 0;
+    
+    // Supply rate = (borrow rate * utilization) + (quota revenue / liquidity)
+    uint256 borrowRate = baseInterestRate();
+    uint256 utilization = (expectedLiquidity_ - availableLiquidity()) 
+        * RAY / expectedLiquidity_;
+    
+    return borrowRate * utilization / RAY + 
+        quotaRevenue() * RAY / expectedLiquidity_;
+}
+```
+
+Supply rate reflects:
+- Interest from base debt (scaled by utilization)
+- Revenue from quotas (distributed to all LPs)
+
+## Quota Revenue
+
+In addition to base interest, pools earn revenue from quota interest on non-underlying collateral:
+
+```solidity
+uint96 internal _quotaRevenue;             // Annual revenue in underlying tokens
+uint40 public lastQuotaRevenueUpdate;      // Last update timestamp
+```
+
+### Revenue Updates
+
+Quota revenue is updated by the Pool Quota Keeper when quotas change:
+
+```solidity
+function updateQuotaRevenue(int256 quotaRevenueDelta) external {
+    require(msg.sender == poolQuotaKeeper);
+    
+    // Accrue revenue since last update
+    uint256 elapsed = block.timestamp - lastQuotaRevenueUpdate;
+    uint256 accruedRevenue = _quotaRevenue * elapsed / SECONDS_PER_YEAR;
+    _expectedLiquidityLU += accruedRevenue;
+    
+    // Apply delta
+    if (quotaRevenueDelta >= 0) {
+        _quotaRevenue += uint96(uint256(quotaRevenueDelta));
+    } else {
+        _quotaRevenue -= uint96(uint256(-quotaRevenueDelta));
+    }
+    
+    lastQuotaRevenueUpdate = uint40(block.timestamp);
+}
+```
+
+**Revenue Calculation:**
+
+Quota revenue comes from:
+- Quota interest rates (continuous)
+- One-time quota increase fees (discrete)
+
+```solidity
+// From Pool Quota Keeper
+revenueDelta = quotaChange * rate / PERCENTAGE_FACTOR
+```
+
+<Info>
+Quota revenue is distributed proportionally to all LPs through the expected liquidity calculation, similar to how base interest works.
+</Info>
+
+## Liquidity Management
+
+### Expected Liquidity
+
+Expected liquidity represents the pool's total value including borrowed funds:
+
+```solidity
+function expectedLiquidity() public view returns (uint256) {
+    return _expectedLiquidityLU
+        + _calcBaseInterestAccrued()
+        + _calcQuotaRevenueAccrued();
+}
+
+function _calcBaseInterestAccrued() internal view returns (uint256) {
+    uint256 timestampLU = lastBaseInterestUpdate;
+    if (block.timestamp == timestampLU) return 0;
+    
+    return _expectedLiquidityLU
+        .calcLinearGrowth(_baseInterestRate, timestampLU);
+}
+
+function _calcQuotaRevenueAccrued() internal view returns (uint256) {
+    uint256 timestampLU = lastQuotaRevenueUpdate;
+    if (block.timestamp == timestampLU) return 0;
+    
+    return uint256(_quotaRevenue)
+        * (block.timestamp - timestampLU) / SECONDS_PER_YEAR;
+}
+```
+
+### Available Liquidity
+
+Available liquidity is the amount that can be withdrawn or borrowed:
+
+```solidity
+function availableLiquidity() public view returns (uint256) {
+    return IERC20(asset()).balanceOf(address(this));
+}
+```
+
+This is simply the pool's underlying token balance at the current moment.
+
+**Key Invariant:**
+
+```solidity
+expectedLiquidity = availableLiquidity + totalBorrowed + accruedInterest
+```
+
+### Utilization Rate
+
+Utilization measures what fraction of the pool's capital is currently borrowed:
+
+```solidity
+utilization = (expectedLiquidity - availableLiquidity) / expectedLiquidity
+            = totalBorrowed / expectedLiquidity
+```
+
+Utilization drives the interest rate model:
+- Low utilization → Low rates → Encourage borrowing
+- High utilization → High rates → Encourage repayment and deposits
+
+## Credit Manager Management
+
+### Connecting Credit Managers
+
+Only the configurator can add credit managers to the pool:
+
+```solidity
+function addCreditManager(address creditManager) external {
+    // Called by PoolService during credit manager deployment
+}
+```
+
+### Debt Limits
+
+Each credit manager has individual and aggregate debt limits:
+
+```solidity
+// Set per-manager limit
+function setCreditManagerDebtLimit(
+    address creditManager,
+    uint256 newLimit
+) external configuratorOnly;
+
+// Set global limit
+function setTotalDebtLimit(uint256 newLimit) 
+    external configuratorOnly;
+```
+
+**Limit Checks:**
+
+```solidity
+function creditManagerBorrowable(address creditManager) 
+    external view returns (uint256) {
+    
+    DebtParams memory cmDebt = _creditManagerDebt[creditManager];
+    DebtParams memory total = _totalDebt;
+    
+    // Available under CM limit
+    uint256 cmAvailable = cmDebt.limit - cmDebt.borrowed;
+    
+    // Available under total limit
+    uint256 totalAvailable = total.limit - total.borrowed;
+    
+    // Available in pool
+    uint256 liquidityAvailable = availableLiquidity();
+    
+    // Return minimum of all constraints
+    return Math.min(
+        Math.min(cmAvailable, totalAvailable),
+        liquidityAvailable
+    );
+}
+```
+
+<Note>
+Debt limits act as a safety mechanism to:
+- Limit exposure to any single credit manager
+- Control overall protocol risk
+- Prevent pool depletion
+- Enable gradual scaling of credit managers
+</Note>
+
+## Pool Configuration
+
+### Key Parameters
+
+```solidity
+// Immutable
+address public immutable treasury;        // Protocol treasury
+address public immutable underlyingToken; // Asset being lent
+
+// Configurable
+address public interestRateModel;         // Interest rate calculation
+address public poolQuotaKeeper;           // Quota management
+uint16 public withdrawFee;                // Withdrawal fee in bps
+uint256 public totalDebtLimit;            // Global debt limit
+
+mapping(address => uint256) creditManagerDebtLimit;  // Per-CM limits
+```
+
+### Admin Functions
+
+```solidity
+// Update interest rate model
+function setInterestRateModel(address newModel) 
+    external configuratorOnly;
+
+// Update pool quota keeper
+function setPoolQuotaKeeper(address newKeeper) 
+    external configuratorOnly;
+
+// Update withdrawal fee
+function setWithdrawFee(uint256 newFee) 
+    external configuratorOnly {
+    require(newFee <= MAX_WITHDRAW_FEE);
+    withdrawFee = uint16(newFee);
+}
+
+// Emergency controls
+function pause() external pauserOnly;
+function unpause() external unpauserOnly;
+```
+
+## Events
+
+Pools emit events for all significant operations:
+
+```solidity
+event Refer(address indexed onBehalfOf, uint256 indexed referralCode, uint256 amount);
+event Borrow(address indexed creditManager, address indexed creditAccount, uint256 amount);
+event Repay(address indexed creditManager, uint256 borrowedAmount, uint256 profit, uint256 loss);
+event IncurUncoveredLoss(address indexed creditManager, uint256 loss);
+event SetInterestRateModel(address indexed newInterestRateModel);
+event SetPoolQuotaKeeper(address indexed newPoolQuotaKeeper);
+event SetTotalDebtLimit(uint256 limit);
+event AddCreditManager(address indexed creditManager);
+event SetCreditManagerDebtLimit(address indexed creditManager, uint256 newLimit);
+event SetWithdrawFee(uint256 fee);
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="For LPs" icon="hand-holding-dollar">
+    - Monitor utilization rate
+    - Understand withdrawal fee
+    - Check credit manager risk
+    - Track treasury share coverage
+  </Card>
+  
+  <Card title="For Integrators" icon="plug">
+    - Check available liquidity before operations
+    - Handle ERC-4626 edge cases
+    - Use referral codes appropriately
+    - Monitor debt limit changes
+  </Card>
+  
+  <Card title="For Governance" icon="gavel">
+    - Set appropriate debt limits
+    - Calibrate interest rate model
+    - Maintain treasury share buffer
+    - Monitor cross-CM risk
+  </Card>
+  
+  <Card title="For Developers" icon="code">
+    - Update interest before state changes
+    - Handle rounding carefully
+    - Check for paused state
+    - Validate limit constraints
+  </Card>
+</CardGroup>

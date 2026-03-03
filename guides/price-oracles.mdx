@@ -1,0 +1,427 @@
+---
+title: "Price Oracles"
+description: "Understanding price feeds and oracle integration in Gearbox Protocol Core V3 for accurate collateral valuation"
+---
+
+## Overview
+
+The Price Oracle system provides accurate token pricing for collateral valuation, health factor calculations, and liquidation decisions. Gearbox uses a dual-feed architecture with main and reserve price feeds for enhanced security.
+
+## IPriceOracleV3 Interface
+
+```solidity
+interface IPriceOracleV3 {
+    /// @notice Get price of token in USD (scaled to token decimals)
+    function getPrice(address token) external view returns (uint256);
+    
+    /// @notice Get safe price (minimum of main and reserve feeds)
+    function getSafePrice(address token) external view returns (uint256);
+    
+    /// @notice Get reserve price feed price
+    function getReservePrice(address token) external view returns (uint256);
+    
+    /// @notice Convert token amount to USD
+    function convertToUSD(uint256 amount, address token) 
+        external view returns (uint256);
+    
+    /// @notice Convert USD amount to token
+    function convertFromUSD(uint256 amount, address token) 
+        external view returns (uint256);
+    
+    /// @notice Convert between tokens
+    function convert(uint256 amount, address tokenFrom, address tokenTo) 
+        external view returns (uint256);
+    
+    /// @notice Safe conversion to USD (uses safe price)
+    function safeConvertToUSD(uint256 amount, address token) 
+        external view returns (uint256);
+}
+```
+
+## Price Feed Configuration
+
+### Price Feed Parameters
+
+```solidity
+struct PriceFeedParams {
+    address priceFeed;        // Price feed contract address
+    uint32 stalenessPeriod;   // Max age of price data in seconds
+    bool skipCheck;           // Whether to skip staleness check
+    uint8 tokenDecimals;      // Token decimals for price scaling
+}
+```
+
+### Querying Price Feed Info
+
+```solidity
+ICreditManagerV3 manager = ICreditManagerV3(creditManagerAddress);
+IPriceOracleV3 oracle = IPriceOracleV3(manager.priceOracle());
+
+// Get price feed for a token
+address priceFeed = oracle.priceFeeds(token);
+
+// Get complete price feed parameters
+PriceFeedParams memory params = oracle.priceFeedParams(token);
+
+// Get reserve price feed
+address reserveFeed = oracle.reservePriceFeeds(token);
+PriceFeedParams memory reserveParams = oracle.reservePriceFeedParams(token);
+```
+
+## Price Queries
+
+### Basic Price Retrieval
+
+```solidity
+IPriceOracleV3 oracle = IPriceOracleV3(oracleAddress);
+
+// Get current price (USD per token, scaled by token decimals)
+uint256 price = oracle.getPrice(token);
+
+// Example: USDC with 6 decimals
+// price = 1_000_000 means 1 USDC = 1 USD
+
+// Example: WETH with 18 decimals
+// price = 2000_000000000000000000 means 1 WETH = 2000 USD
+```
+
+### Safe Prices
+
+Safe prices use the minimum of main and reserve feeds:
+
+```solidity
+// Get safe price (minimum of both feeds)
+uint256 safePrice = oracle.getSafePrice(token);
+
+// Get reserve price directly
+uint256 reservePrice = oracle.getReservePrice(token);
+
+// Safe price is used during:
+// - Withdrawals
+// - Operations with forbidden tokens
+// - Liquidation scenarios
+```
+
+<Note>
+  Safe pricing prevents manipulation by using the more conservative price estimate from dual feeds.
+</Note>
+
+## Price Conversions
+
+### Token to USD
+
+```solidity
+// Convert token amount to USD value
+uint256 amount = 1000 * 10**18; // 1000 tokens (18 decimals)
+uint256 usdValue = oracle.convertToUSD(amount, token);
+
+// Safe conversion (uses safe price)
+uint256 safeUsdValue = oracle.safeConvertToUSD(amount, token);
+```
+
+### USD to Token
+
+```solidity
+// Convert USD value to token amount
+uint256 usdAmount = 5000 * 10**18; // $5000 USD
+uint256 tokenAmount = oracle.convertFromUSD(usdAmount, token);
+```
+
+### Token to Token
+
+```solidity
+// Convert between two tokens
+uint256 wethAmount = 10 * 10**18; // 10 WETH
+uint256 usdcAmount = oracle.convert(
+    wethAmount,
+    weth,
+    usdc
+);
+
+// This performs:
+// 1. WETH -> USD
+// 2. USD -> USDC
+```
+
+## Price Updates
+
+### On-Demand Price Updates
+
+For protocols with push-based oracles (like Pyth), update prices before operations:
+
+```solidity
+struct PriceUpdate {
+    bytes32 priceId;    // Price feed identifier
+    bytes updateData;   // Signed price data
+}
+
+MultiCall[] memory calls = new MultiCall[](2);
+
+// 1. Update prices (must be first call)
+PriceUpdate[] memory updates = new PriceUpdate[](1);
+updates[0] = PriceUpdate({
+    priceId: pythPriceId,
+    updateData: signedPriceData
+});
+
+calls[0] = MultiCall({
+    target: address(facade),
+    callData: abi.encodeCall(
+        ICreditFacadeV3Multicall.onDemandPriceUpdates,
+        (updates)
+    )
+});
+
+// 2. Execute operation with fresh prices
+calls[1] = MultiCall({
+    target: address(facade),
+    callData: operationCallData
+});
+
+facade.multicall(creditAccount, calls);
+```
+
+<Warning>
+  `onDemandPriceUpdates` must be the first call in the multicall array or it will revert.
+</Warning>
+
+## Collateral Valuation
+
+### Health Factor Calculation
+
+The oracle is used to calculate account health:
+
+```solidity
+// Health Factor = (Total Weighted Value) / (Total Debt)
+// Both values calculated using oracle prices
+
+ICreditManagerV3 manager = ICreditManagerV3(creditManagerAddress);
+
+CollateralDebtData memory data = manager.calcDebtAndCollateral(
+    creditAccount,
+    CollateralCalcTask.DEBT_COLLATERAL
+);
+
+// Values in USD (oracle-priced)
+uint256 totalValueUSD = data.totalValueUSD;      // Sum of all tokens
+uint256 twvUSD = data.twvUSD;                    // LT-weighted value
+uint256 totalDebtUSD = data.totalDebtUSD;        // Total debt
+
+// Health factor in basis points
+uint256 healthFactor = (twvUSD * 10000) / totalDebtUSD;
+```
+
+### Liquidation Thresholds
+
+Each token has a liquidation threshold (LT) that weights its value:
+
+```solidity
+// Get token's liquidation threshold
+uint16 lt = manager.liquidationThresholds(token);
+
+// LT in basis points (e.g., 8500 = 85%)
+// Weighted value = balance * price * (LT / 10000)
+
+// Example:
+// Token balance: 100
+// Token price: $10
+// LT: 8500 (85%)
+// Weighted value: 100 * $10 * 0.85 = $850
+```
+
+## Safe Price Scenarios
+
+The protocol uses safe prices in specific situations:
+
+### Withdrawal Operations
+
+```solidity
+// When withdrawing collateral, safe prices are used
+// This prevents manipulation where user withdraws at inflated price
+
+MultiCall[] memory calls = new MultiCall[](1);
+
+calls[0] = MultiCall({
+    target: address(facade),
+    callData: abi.encodeCall(
+        ICreditFacadeV3Multicall.withdrawCollateral,
+        (token, amount, recipient)
+    )
+});
+
+// Collateral check uses safe prices
+facade.multicall(creditAccount, calls);
+```
+
+### Forbidden Tokens
+
+```solidity
+// If account has forbidden tokens enabled,
+// all collateral checks use safe prices
+
+uint256 forbiddenMask = facade.forbiddenTokenMask();
+uint256 enabledMask = manager.enabledTokensMaskOf(creditAccount);
+
+if (enabledMask & forbiddenMask != 0) {
+    // Safe prices will be used for this account
+}
+```
+
+## Price Feed Types
+
+Gearbox supports multiple oracle types:
+
+### Chainlink Price Feeds
+
+Standard pull-based oracles:
+
+```solidity
+// Chainlink feeds update automatically
+// Protocol checks staleness period
+
+PriceFeedParams memory params = oracle.priceFeedParams(token);
+require(!params.skipCheck, "Staleness check enabled");
+
+// Price must be updated within stalenessPeriod
+```
+
+### Pyth Network
+
+Push-based oracles requiring updates:
+
+```solidity
+// Must call onDemandPriceUpdates before operations
+MultiCall[] memory calls = new MultiCall[](2);
+
+calls[0] = MultiCall({
+    target: address(facade),
+    callData: abi.encodeCall(
+        ICreditFacadeV3Multicall.onDemandPriceUpdates,
+        (pythUpdates)
+    )
+});
+
+calls[1] = MultiCall({
+    target: address(facade),
+    callData: operationCallData
+});
+```
+
+### Custom Price Feeds
+
+Gearbox can integrate custom oracle logic:
+
+```solidity
+PriceFeedParams memory params = oracle.priceFeedParams(token);
+
+if (params.skipCheck) {
+    // Custom feed implements its own safety checks
+    // No staleness validation by protocol
+}
+```
+
+## Complete Example
+
+Integrating oracle prices into your application:
+
+```solidity
+contract OracleIntegration {
+    ICreditManagerV3 public immutable creditManager;
+    IPriceOracleV3 public immutable oracle;
+    
+    constructor(address _creditManager) {
+        creditManager = ICreditManagerV3(_creditManager);
+        oracle = IPriceOracleV3(creditManager.priceOracle());
+    }
+    
+    function getAccountHealth(address creditAccount) 
+        external view returns (
+            uint256 totalValueUSD,
+            uint256 totalDebtUSD,
+            uint256 healthFactor
+        ) 
+    {
+        CollateralDebtData memory data = creditManager.calcDebtAndCollateral(
+            creditAccount,
+            CollateralCalcTask.DEBT_COLLATERAL
+        );
+        
+        totalValueUSD = data.twvUSD;
+        totalDebtUSD = data.totalDebtUSD;
+        
+        if (totalDebtUSD > 0) {
+            healthFactor = (totalValueUSD * 10000) / totalDebtUSD;
+        } else {
+            healthFactor = type(uint256).max;
+        }
+    }
+    
+    function getTokenValue(
+        address token,
+        uint256 amount,
+        bool useSafePrice
+    ) external view returns (uint256 usdValue) {
+        if (useSafePrice) {
+            usdValue = oracle.safeConvertToUSD(amount, token);
+        } else {
+            usdValue = oracle.convertToUSD(amount, token);
+        }
+    }
+    
+    function canWithdraw(
+        address creditAccount,
+        address token,
+        uint256 amount
+    ) external view returns (bool) {
+        // Get current health
+        CollateralDebtData memory data = creditManager.calcDebtAndCollateral(
+            creditAccount,
+            CollateralCalcTask.DEBT_COLLATERAL
+        );
+        
+        if (data.totalDebtUSD == 0) return true;
+        
+        // Calculate value being withdrawn (using safe price)
+        uint256 withdrawValueUSD = oracle.safeConvertToUSD(amount, token);
+        
+        // Get token's LT
+        uint16 lt = creditManager.liquidationThresholds(token);
+        uint256 weightedWithdrawValue = withdrawValueUSD * lt / 10000;
+        
+        // New TWV after withdrawal
+        uint256 newTwvUSD = data.twvUSD - weightedWithdrawValue;
+        
+        // Check if health factor stays above 100%
+        uint256 newHealthFactor = (newTwvUSD * 10000) / data.totalDebtUSD;
+        return newHealthFactor >= 10000;
+    }
+}
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Always use safe prices" icon="shield-check">
+    For user-facing withdrawals, use safe prices to prevent manipulation
+  </Card>
+  <Card title="Check staleness" icon="clock">
+    Verify price feed staleness periods match your risk tolerance
+  </Card>
+  <Card title="Update push oracles" icon="arrows-rotate">
+    Always call onDemandPriceUpdates for Pyth and similar feeds
+  </Card>
+  <Card title="Monitor health factor" icon="heart-pulse">
+    Track account health using oracle prices to avoid liquidation
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Integration Guide" icon="book" href="/guides/integration">
+    Complete integration walkthrough
+  </Card>
+  <Card title="Managing Debt" icon="coins" href="/guides/managing-debt">
+    How debt affects health factor
+  </Card>
+</CardGroup>

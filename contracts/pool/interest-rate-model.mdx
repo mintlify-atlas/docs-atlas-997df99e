@@ -1,0 +1,339 @@
+---
+title: Linear Interest Rate Model V3
+description: Two-slope linear interest rate model with optional borrowing restrictions at high utilization
+---
+
+## Overview
+
+LinearInterestRateModelV3 implements a three-segment piecewise linear interest rate curve for Gearbox V3 pools. It features:
+
+- **Obtuse region** (0 to U₁): Gentle slope for low utilization
+- **Intermediate region** (U₁ to U₂): Moderate slope to reduce rate jumps
+- **Steep region** (U₂ to 100%): Sharp slope to encourage repayment at high utilization
+
+The model can optionally prevent borrowing beyond U₂ to create a liquidity reserve for withdrawals and stabilize rates.
+
+**Contract Location:** `contracts/pool/LinearInterestRateModelV3.sol`
+
+## Key Features
+
+- **Three-Segment Curve**: Smoother transitions than single-slope models
+- **Optional U₂ Borrowing Limit**: Can restrict borrowing to maintain exit liquidity
+- **Stateless**: Pure view functions with no state changes
+- **Immutable Parameters**: Set at deployment for predictability
+
+## Architecture
+
+```solidity
+contract LinearInterestRateModelV3 is ILinearInterestRateModelV3
+```
+
+## Parameters
+
+### Utilization Points
+
+<ParamField path="U_1" type="uint16">
+  First slope change point in basis points (obtuse → intermediate)
+</ParamField>
+
+<ParamField path="U_2" type="uint16">
+  Second slope change point in basis points (intermediate → steep)
+</ParamField>
+
+### Rate Parameters
+
+<ParamField path="R_base" type="uint16">
+  Base interest rate in basis points (rate at 0% utilization)
+</ParamField>
+
+<ParamField path="R_slope1" type="uint16">
+  Slope of obtuse region in basis points
+</ParamField>
+
+<ParamField path="R_slope2" type="uint16">
+  Slope of intermediate region in basis points
+</ParamField>
+
+<ParamField path="R_slope3" type="uint16">
+  Slope of steep region in basis points
+</ParamField>
+
+### Configuration
+
+<ParamField path="isBorrowingMoreU2Forbidden" type="bool">
+  Whether to prevent borrowing when utilization exceeds U₂
+</ParamField>
+
+## Constructor
+
+```solidity
+constructor(
+    uint16 U_1,
+    uint16 U_2,
+    uint16 R_base,
+    uint16 R_slope1,
+    uint16 R_slope2,
+    uint16 R_slope3,
+    bool _isBorrowingMoreU2Forbidden
+)
+```
+
+**Parameter Validation:**
+- `U_2 < 10000` (must be less than 100%)
+- `U_1 ≤ U_2`
+- `R_base ≤ 10000`
+- `R_slope2 ≤ 10000`
+- `R_slope1 ≤ R_slope2 ≤ R_slope3` (monotonically increasing slopes)
+
+**Example:**
+```solidity
+// Deploy model:
+// U_1 = 70%, U_2 = 90%
+// R_base = 1%, R_slope1 = 4%, R_slope2 = 10%, R_slope3 = 100%
+// Prevent borrowing over U_2
+ILinearInterestRateModelV3 model = new LinearInterestRateModelV3(
+    7000,  // U_1 = 70%
+    9000,  // U_2 = 90%
+    100,   // R_base = 1%
+    400,   // R_slope1 = 4%
+    1000,  // R_slope2 = 10%
+    10000, // R_slope3 = 100%
+    true   // Prevent borrowing over 90%
+);
+```
+
+## Core Functions
+
+### calcBorrowRate
+
+```solidity
+function calcBorrowRate(
+    uint256 expectedLiquidity,
+    uint256 availableLiquidity,
+    bool checkOptimalBorrowing
+) external view returns (uint256)
+```
+
+Calculates the borrow interest rate based on pool liquidity.
+
+<ParamField path="expectedLiquidity" type="uint256">
+  Total expected liquidity (available + borrowed + interest)
+</ParamField>
+
+<ParamField path="availableLiquidity" type="uint256">
+  Current available liquidity in the pool
+</ParamField>
+
+<ParamField path="checkOptimalBorrowing" type="bool">
+  Whether to enforce U₂ borrowing restriction if enabled
+</ParamField>
+
+**Returns:** Annual borrow rate in ray (1e27)
+
+**Formula:**
+
+Utilization: `U = (expectedLiquidity - availableLiquidity) / expectedLiquidity`
+
+**If U ≤ U₁:**
+```
+borrowRate = R_base + R_slope1 * (U / U_1)
+```
+
+**If U₁ < U ≤ U₂:**
+```
+borrowRate = R_base + R_slope1 + R_slope2 * ((U - U_1) / (U_2 - U_1))
+```
+
+**If U > U₂:**
+```
+borrowRate = R_base + R_slope1 + R_slope2 + R_slope3 * ((U - U_2) / (1 - U_2))
+```
+
+<Note>
+If `isBorrowingMoreU2Forbidden` is true and `checkOptimalBorrowing` is true, the function reverts with `BorrowingMoreThanU2ForbiddenException` when U > U₂.
+</Note>
+
+**Example:**
+```solidity
+// Pool has 1M expected, 300K available
+// U = (1M - 300K) / 1M = 70%
+uint256 rate = model.calcBorrowRate(
+    1_000_000e6,  // expectedLiquidity
+    300_000e6,    // availableLiquidity
+    true          // checkOptimalBorrowing
+);
+// Returns rate in ray (e.g., 50000000000000000000000000 = 5%)
+```
+
+### availableToBorrow
+
+```solidity
+function availableToBorrow(
+    uint256 expectedLiquidity,
+    uint256 availableLiquidity
+) external view returns (uint256)
+```
+
+Calculates how much can be borrowed from the pool.
+
+**Returns:**
+- If `isBorrowingMoreU2Forbidden` is false: returns `availableLiquidity`
+- If `isBorrowingMoreU2Forbidden` is true: returns amount that can be borrowed before reaching U₂
+
+**Formula when restricted:**
+```solidity
+minAvailableLiquidity = expectedLiquidity * (1 - U_2)
+availableToBorrow = max(0, availableLiquidity - minAvailableLiquidity)
+```
+
+**Example:**
+```solidity
+// Pool has 1M expected, 500K available, U_2 = 90%
+// Must keep 1M * (1 - 0.9) = 100K available
+// Can borrow: 500K - 100K = 400K
+
+uint256 borrowable = model.availableToBorrow(
+    1_000_000e6,  // expectedLiquidity
+    500_000e6     // availableLiquidity  
+);
+// Returns 400_000e6
+```
+
+### getModelParameters
+
+```solidity
+function getModelParameters() external view returns (
+    uint16 U_1,
+    uint16 U_2,
+    uint16 R_base,
+    uint16 R_slope1,
+    uint16 R_slope2,
+    uint16 R_slope3
+)
+```
+
+Returns all model parameters in basis points.
+
+### serialize
+
+```solidity
+function serialize() external view returns (bytes memory)
+```
+
+Returns ABI-encoded model parameters for off-chain analysis or migration.
+
+## Example Configurations
+
+### Conservative Stablecoin Pool
+
+```solidity
+// Low base rate, gentle slopes, strict U_2 limit
+new LinearInterestRateModelV3(
+    8000,   // U_1 = 80%
+    9500,   // U_2 = 95%
+    200,    // R_base = 2%
+    300,    // R_slope1 = 3%
+    1000,   // R_slope2 = 10%
+    5000,   // R_slope3 = 50%
+    true    // Prevent borrowing over 95%
+);
+```
+
+**Rate examples:**
+- At 0%: 2%
+- At 50%: 2% + 3% * (50/80) = 3.875%
+- At 80%: 2% + 3% = 5%
+- At 95%: 2% + 3% + 10% * (15/15) = 15%
+- At 100%: Borrowing prevented if trying to go from &lt;95% to &gt;95%
+
+### Aggressive ETH Pool
+
+```solidity
+// Higher base rate, steeper slopes, no U_2 restriction
+new LinearInterestRateModelV3(
+    6000,   // U_1 = 60%
+    8000,   // U_2 = 80%
+    500,    // R_base = 5%
+    1000,   // R_slope1 = 10%
+    3000,   // R_slope2 = 30%
+    10000,  // R_slope3 = 100%
+    false   // Allow borrowing over 80%
+);
+```
+
+**Rate examples:**
+- At 0%: 5%
+- At 60%: 5% + 10% = 15%
+- At 80%: 5% + 10% + 30% = 45%
+- At 100%: 5% + 10% + 30% + 100% * (20/20) = 145%
+
+## Interest Rate Visualization
+
+```
+Rate (%)
+  |
+  |                                          /
+  |                                        /  
+  |                                      /  Steep (slope3)
+  |                               _____/
+  |                         _____/  Intermediate (slope2)
+  |                   _____/
+  |          ________/  Obtuse (slope1)
+  |_________/
+  |_________________________________________
+  0        U₁        U₂                   100%
+                                      Utilization
+```
+
+## Rate Calculation Example
+
+Given model: `U_1=70%`, `U_2=90%`, `R_base=1%`, `R_slope1=4%`, `R_slope2=10%`, `R_slope3=100%`
+
+**Scenario 1: 50% utilization**
+- In obtuse region (U ≤ 70%)
+- Rate = 1% + 4% * (50/70) = 1% + 2.857% = **3.857%**
+
+**Scenario 2: 80% utilization**
+- In intermediate region (70% < U ≤ 90%)
+- Rate = 1% + 4% + 10% * ((80-70)/(90-70)) = 1% + 4% + 5% = **10%**
+
+**Scenario 3: 95% utilization**
+- In steep region (U > 90%)
+- Rate = 1% + 4% + 10% + 100% * ((95-90)/(100-90)) = 1% + 4% + 10% + 50% = **65%**
+
+## Integration with Pool
+
+The pool calls the interest rate model on every state change:
+
+```solidity
+// In PoolV3._updateBaseInterest()
+_baseInterestRate = IInterestRateModel(interestRateModel).calcBorrowRate({
+    expectedLiquidity: expectedLiquidity_,
+    availableLiquidity: availableLiquidity_,
+    checkOptimalBorrowing: checkOptimalBorrowing
+});
+```
+
+**When `checkOptimalBorrowing` is true:**
+- Deposit: false (deposits don't increase utilization)
+- Withdraw: false (allow withdrawals even at high utilization)
+- Borrow: **true** (enforce U₂ limit when borrowing)
+- Repay: false (repayments decrease utilization)
+
+## Security Considerations
+
+<Info>
+**Immutable Parameters**: All rate parameters are set at deployment and cannot be changed, ensuring predictability.
+</Info>
+
+<Info>
+**U₂ Borrowing Restriction**: When enabled, prevents utilization from exceeding U₂ during borrowing operations, maintaining exit liquidity reserve.
+</Info>
+
+<Info>
+**Parameter Validation**: Constructor validates that slopes are monotonically increasing and utilization points are properly ordered.
+</Info>
+
+<Info>
+**Rate Bounds**: Base rate and intermediate slope are capped at 100% to prevent misconfiguration.
+</Info>

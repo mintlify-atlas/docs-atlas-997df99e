@@ -1,0 +1,423 @@
+---
+title: Credit Accounts
+description: Understanding credit account lifecycle, operations, and management in Gearbox Protocol V3
+---
+
+Credit accounts are smart contract wallets that enable users to borrow funds and interact with whitelisted DeFi protocols while maintaining strict collateralization requirements. Each credit account is owned by a single borrower and managed by the credit manager.
+
+## Account Structure
+
+Credit accounts store critical information for debt and collateral tracking:
+
+```solidity
+struct CreditAccountInfo {
+    uint256 debt;                      // Principal debt amount
+    uint256 cumulativeIndexLastUpdate; // Interest index at last update
+    uint128 cumulativeQuotaInterest;   // Accrued quota interest
+    uint128 quotaFees;                 // Accumulated quota fees
+    uint256 enabledTokensMask;         // Bitmask of enabled collateral
+    uint16 flags;                      // Account status flags
+    uint64 lastDebtUpdate;             // Timestamp of last debt change
+    address borrower;                  // Account owner
+}
+```
+
+### Key Fields Explained
+
+**Debt Components:**
+- `debt`: The principal amount borrowed from the pool
+- `cumulativeIndexLastUpdate`: Checkpoint for calculating accrued base interest
+- `cumulativeQuotaInterest`: Total quota interest accumulated over time
+- `quotaFees`: One-time fees from quota increases
+
+**Collateral Tracking:**
+- `enabledTokensMask`: Bitmask indicating which tokens count as collateral
+- Bit 0 (value 1): Reserved for the underlying token (always enabled)
+- Bits 1-255: Available for other collateral tokens
+
+**Account State:**
+- `flags`: Status flags for special conditions or permissions
+- `lastDebtUpdate`: Prevents debt manipulation in the same block
+- `borrower`: The address that controls the account
+
+## Account Lifecycle
+
+### Opening an Account
+
+Accounts are opened through the Credit Facade using a multicall pattern:
+
+```solidity
+function openCreditAccount(
+    address onBehalfOf,
+    MultiCall[] calldata calls,
+    uint256 referralCode
+) external payable returns (address creditAccount);
+```
+
+**Opening Flow:**
+
+1. **Account Creation**: Credit Manager requests a new credit account from the Account Factory
+2. **Initial Operations**: Execute multicall operations (add collateral, increase debt, swaps, etc.)
+3. **Collateral Check**: Verify the account meets minimum health factor requirements
+4. **Debt Validation**: Ensure debt is within configured limits (`minDebt` ≤ debt ≤ `maxDebt`)
+
+<Info>
+Accounts can be opened with zero debt initially if collateral is added. However, most users open accounts with both collateral and debt to begin leveraged positions immediately.
+</Info>
+
+**Available Operations During Opening:**
+
+Permissions during opening include all operations except decreasing debt:
+
+```solidity
+uint192 constant OPEN_CREDIT_ACCOUNT_PERMISSIONS = 
+    ALL_PERMISSIONS & ~DECREASE_DEBT_PERMISSION;
+```
+
+This allows:
+- ✅ Adding collateral
+- ✅ Increasing debt
+- ✅ Withdrawing collateral
+- ✅ Updating quotas
+- ✅ External calls to adapters
+- ❌ Decreasing debt (prevented to ensure proper initialization)
+
+### Managing an Account
+
+After opening, users can modify their accounts through multicalls:
+
+```solidity
+function multicall(
+    address creditAccount,
+    MultiCall[] calldata calls
+) external payable;
+```
+
+**Common Operations:**
+
+<AccordionGroup>
+  <Accordion title="Increase Debt">
+    Borrow additional funds from the pool:
+
+    ```solidity
+    function increaseDebt(uint256 amount) external;
+    ```
+
+    **Validations:**
+    - Debt must not have been updated in the same block
+    - No forbidden tokens can be enabled on the account
+    - Resulting debt must not exceed `maxDebt`
+    - Total borrowed by credit manager in this block must not exceed limit
+    - Account must pass collateral check with required health factor
+
+    **Interest Update:**
+    When debt increases, the cumulative index is adjusted to preserve accrued interest:
+    
+    ```solidity
+    // New index calculation ensures:
+    // debt * (indexNow / indexOld - 1) = newDebt * (indexNow / indexNew - 1)
+    newCumulativeIndex = (indexNow * newDebt * PRECISION) / 
+        ((PRECISION * indexNow * debt) / indexOld + PRECISION * amount);
+    ```
+  </Accordion>
+
+  <Accordion title="Decrease Debt">
+    Repay debt to the pool:
+
+    ```solidity
+    function decreaseDebt(uint256 amount) external;
+    ```
+
+    **Repayment Order:**
+    1. Quota fees
+    2. Quota interest + protocol fee
+    3. Base interest + protocol fee  
+    4. Debt principal
+
+    **Special Cases:**
+    - If `amount` exceeds total debt, performs full repayment
+    - Full repayment (debt = 0) requires all quotas to be disabled
+    - Partial repayment must leave debt ≥ `minDebt` or reduce it to 0
+    - Collateral check skipped if debt reaches zero
+  </Accordion>
+
+  <Accordion title="Add Collateral">
+    Transfer tokens from user to the credit account:
+
+    ```solidity
+    function addCollateral(address token, uint256 amount) external;
+    ```
+
+    **Behavior:**
+    - Requires token approval from caller to credit manager
+    - Underlying token always counts as collateral
+    - Other tokens require quota allocation to count as collateral
+    - Tokens without quota can be held but won't protect against liquidation
+  </Accordion>
+
+  <Accordion title="Withdraw Collateral">
+    Remove tokens from the credit account:
+
+    ```solidity
+    function withdrawCollateral(
+        address token,
+        uint256 amount,
+        address to
+    ) external;
+    ```
+
+    **Safety Measures:**
+    - Activates safe pricing (minimum of main and reserve price feeds)
+    - Reverts if forbidden tokens are enabled on the account
+    - Account must pass collateral check after withdrawal
+    - Use `type(uint256).max` for `amount` to withdraw entire balance
+  </Accordion>
+
+  <Accordion title="Update Quota">
+    Allocate or deallocate quota for a collateral token:
+
+    ```solidity
+    function updateQuota(
+        address token,
+        int96 quotaChange,
+        uint96 minQuota
+    ) external;
+    ```
+
+    **Effects:**
+    - Enables token if quota increases from 0
+    - Disables token if quota decreases to 0
+    - Charges one-time quota increase fee
+    - Accrues quota interest at the token's rate
+    - Cannot increase quota for forbidden tokens
+    - Requires account to have non-zero debt
+
+    See [Quotas](/concepts/quotas) for detailed mechanics.
+  </Accordion>
+</AccordionGroup>
+
+### Closing an Account
+
+Accounts are closed by repaying all debt and withdrawing collateral:
+
+```solidity
+function closeCreditAccount(
+    address creditAccount,
+    MultiCall[] calldata calls
+) external payable;
+```
+
+**Closing Flow:**
+
+1. **Execute Operations**: Perform multicall operations (swaps, debt repayment, etc.)
+2. **Debt Verification**: Ensure all debt is fully repaid (debt = 0)
+3. **Quota Verification**: Ensure all quotas are disabled
+4. **Collateral Check**: Skipped since account has no debt
+5. **Account Return**: Credit account returned to the factory for reuse
+
+**Available Operations During Closing:**
+
+```solidity
+uint192 constant CLOSE_CREDIT_ACCOUNT_PERMISSIONS = 
+    ALL_PERMISSIONS & ~INCREASE_DEBT_PERMISSION;
+```
+
+This allows:
+- ✅ Decreasing debt
+- ✅ Adding collateral (to cover debt)
+- ✅ Withdrawing collateral
+- ✅ Updating quotas (to disable them)
+- ✅ External calls to adapters
+- ❌ Increasing debt (prevented during closure)
+
+<Tip>
+When closing, users typically swap all collateral to the underlying token first, then decrease debt to repay the loan completely.
+</Tip>
+
+## Account Factory
+
+Credit accounts are managed by the Account Factory, which implements object pooling for gas efficiency:
+
+```solidity
+interface IAccountFactory {
+    function openCreditAccount(address onBehalfOf) 
+        external returns (address);
+    
+    function closeCreditAccount(address creditAccount) external;
+}
+```
+
+**Factory Benefits:**
+- Reuses deployed accounts instead of creating new ones
+- Reduces gas costs for account opening
+- Maintains pool of available accounts
+- Handles account initialization and cleanup
+
+## Active Credit Account Pattern
+
+When adapters need to interact with a credit account, they use the active credit account mechanism:
+
+```solidity
+// Credit Facade sets active account
+function setActiveCreditAccount(address creditAccount) external;
+
+// Adapter retrieves active account
+function getActiveCreditAccountOrRevert() 
+    external view returns (address creditAccount);
+```
+
+**Security Model:**
+
+1. Only the credit facade can set the active account
+2. Only registered adapters can call `execute()` which relies on active account
+3. Active account is cleared after each adapter call
+4. Prevents unauthorized access to credit account operations
+
+<Warning>
+The active credit account is stored in transient state during a single transaction and must never persist across transactions.
+</Warning>
+
+## Collateral Checks
+
+After most operations, accounts undergo a collateral check to ensure adequate collateralization:
+
+```solidity
+struct FullCheckParams {
+    uint256[] collateralHints;  // Tokens to check first
+    uint16 minHealthFactor;     // Minimum health factor in bps
+}
+```
+
+**Health Factor Calculation:**
+
+```solidity
+healthFactor = (twvUSD * 10000) / totalDebtUSD
+```
+
+Where:
+- `twvUSD`: Total weighted value (collateral × liquidation thresholds)
+- `totalDebtUSD`: Total debt including all interest and fees
+- Result must be ≥ `minHealthFactor` (typically 10000 = 100%)
+
+**Collateral Check Modes:**
+
+```solidity
+enum CollateralCalcTask {
+    GENERIC_PARAMS,              // Basic account info
+    DEBT_ONLY,                   // Detailed debt info
+    FULL_COLLATERAL_CHECK_LAZY,  // Stop when sufficient TWV found
+    DEBT_COLLATERAL,             // Full debt and collateral data
+    DEBT_COLLATERAL_SAFE_PRICES  // Use safe (minimum) prices
+}
+```
+
+**Collateral Hints Optimization:**
+
+To reduce gas costs, users can provide hints about which tokens cover the debt:
+
+```solidity
+// If USDC and WETH collateral are sufficient to cover debt
+uint256[] memory hints = [usdcMask, wethMask];
+setFullCheckParams(hints, 10000);
+```
+
+The check will evaluate hinted tokens first and may skip remaining tokens if TWV already exceeds debt.
+
+## Bot Permissions
+
+Account owners can grant bots permission to manage accounts on their behalf:
+
+```solidity
+function setBotPermissions(
+    address bot,
+    uint192 permissions
+) external;
+```
+
+**Permission Flags:**
+
+```solidity
+uint192 constant ADD_COLLATERAL_PERMISSION = 1 << 0;
+uint192 constant INCREASE_DEBT_PERMISSION = 1 << 1;
+uint192 constant DECREASE_DEBT_PERMISSION = 1 << 2;
+uint192 constant WITHDRAW_COLLATERAL_PERMISSION = 1 << 5;
+uint192 constant UPDATE_QUOTA_PERMISSION = 1 << 6;
+uint192 constant EXTERNAL_CALLS_PERMISSION = 1 << 16;
+```
+
+Bots can use their permissions through `botMulticall()`:
+
+```solidity
+function botMulticall(
+    address creditAccount,
+    MultiCall[] calldata calls
+) external;
+```
+
+This enables automated strategies like:
+- Rebalancing positions
+- Taking profit or stop-loss
+- Liquidation protection
+- Yield optimization
+
+## State Transitions
+
+Credit accounts transition through several states:
+
+```
+[Factory Pool] → [Active Account] → [Liquidatable?] → [Closed/Liquidated]
+                        ↓
+                  [Multicall Operations]
+                        ↓
+                  [Collateral Check]
+```
+
+**Account Flags:**
+
+The `flags` field in `CreditAccountInfo` tracks special states:
+- Emergency modes
+- Bot permissions
+- Temporary restrictions
+- Protocol-specific markers
+
+Flags are set and cleared by the credit manager through:
+
+```solidity
+function setFlagFor(
+    address creditAccount,
+    uint16 flag,
+    bool value
+) external;
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Gas Optimization" icon="gauge-high">
+    - Use collateral hints when possible
+    - Batch operations in multicalls
+    - Enable only necessary tokens
+    - Disable unused quotas
+  </Card>
+  
+  <Card title="Safety" icon="shield-check">
+    - Monitor health factor closely
+    - Avoid forbidden tokens
+    - Understand repayment priority
+    - Test operations before execution
+  </Card>
+  
+  <Card title="Liquidation Prevention" icon="triangle-exclamation">
+    - Maintain health factor buffer
+    - Use bot permissions for automation
+    - Monitor price volatility
+    - Keep emergency collateral ready
+  </Card>
+  
+  <Card title="Quota Management" icon="percent">
+    - Only enable needed collateral
+    - Consider quota interest costs
+    - Disable quotas when closing
+    - Check token limits before updating
+  </Card>
+</CardGroup>

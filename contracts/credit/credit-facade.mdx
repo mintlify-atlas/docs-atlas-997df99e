@@ -1,0 +1,747 @@
+---
+title: CreditFacadeV3
+description: User interface for managing leveraged positions in Gearbox Protocol V3
+---
+
+## Overview
+
+The Credit Facade V3 provides the main user interface for opening, closing, and liquidating leveraged positions in the Credit Manager. It implements the multicall functionality that allows users to batch operations and interact with external protocols through adapters.
+
+**Contract Location**: `contracts/credit/CreditFacadeV3.sol`
+
+**Interface**: `ICreditFacadeV3.sol`
+
+## Key Features
+
+- Account opening with optional multicall
+- Account closure and liquidation
+- Multicall for batched operations
+- Bot management for automated account operations
+- Debt and quota size validation
+- Degen NFT whitelist mode support
+- Forbidden token safeguards
+- Partial liquidation support
+
+## State Variables
+
+### Immutable Variables
+
+<ParamField path="version" type="uint256">
+  Contract version (always returns `3_10`)
+</ParamField>
+
+<ParamField path="contractType" type="bytes32">
+  Contract type identifier (always returns `"CREDIT_FACADE"`)
+</ParamField>
+
+<ParamField path="creditManager" type="address">
+  Credit manager connected to this credit facade
+</ParamField>
+
+<ParamField path="underlying" type="address">
+  Credit manager's underlying token
+</ParamField>
+
+<ParamField path="treasury" type="address">
+  Pool's treasury address to pay fees to
+</ParamField>
+
+<ParamField path="priceFeedStore" type="address">
+  Price feed store for on-demand price updates
+</ParamField>
+
+<ParamField path="weth" type="address">
+  WETH token address for ETH wrapping
+</ParamField>
+
+<ParamField path="degenNFT" type="address">
+  Degen NFT address (or `address(0)` if not enabled)
+</ParamField>
+
+<ParamField path="botList" type="address">
+  Bot list contract address
+</ParamField>
+
+<ParamField path="expirable" type="bool">
+  Whether credit facade is expirable
+</ParamField>
+
+<ParamField path="maxQuotaMultiplier" type="uint256">
+  Maximum quota size as a multiple of `maxDebt` (always returns `2`)
+</ParamField>
+
+### Mutable Variables
+
+<ParamField path="expirationDate" type="uint40">
+  Expiration timestamp (0 if not set)
+</ParamField>
+
+<ParamField path="maxDebtPerBlockMultiplier" type="uint8">
+  Maximum amount that can be borrowed in a single block as a multiple of `maxDebt`
+</ParamField>
+
+<ParamField path="debtLimits" type="DebtLimits">
+  Credit account debt limits (minDebt and maxDebt)
+</ParamField>
+
+<ParamField path="forbiddenTokenMask" type="uint256">
+  Bitmask encoding a set of forbidden tokens
+</ParamField>
+
+<ParamField path="lossPolicy" type="address">
+  Contract that enforces policy on liquidations with loss
+</ParamField>
+
+## Core Functions
+
+### Account Management
+
+#### openCreditAccount
+
+```solidity
+function openCreditAccount(
+    address onBehalfOf,
+    MultiCall[] calldata calls,
+    uint256 referralCode
+) external payable returns (address creditAccount)
+```
+
+Opens a new credit account and optionally performs a multicall.
+
+<ParamField path="onBehalfOf" type="address" required>
+  Address on whose behalf to open the account
+</ParamField>
+
+<ParamField path="calls" type="MultiCall[]" required>
+  List of calls to perform after opening the account
+</ParamField>
+
+<ParamField path="referralCode" type="uint256" required>
+  Referral code for potential rewards (0 if none)
+</ParamField>
+
+<ParamField path="creditAccount" type="address">
+  Returns the address of the newly opened account
+</ParamField>
+
+<Note>
+- Wraps any ETH sent in the function call and sends it back to caller
+- If Degen NFT is enabled, burns one from the caller
+- Performs a multicall with restrictions (no debt decrease allowed)
+- Runs collateral check after the multicall
+</Note>
+
+<Warning>
+Reverts if contract is paused or expired. When Degen NFT is enabled, `onBehalfOf` must equal `msg.sender`.
+</Warning>
+
+#### closeCreditAccount
+
+```solidity
+function closeCreditAccount(
+    address creditAccount,
+    MultiCall[] calldata calls
+) external payable
+```
+
+Closes a credit account after performing an optional multicall.
+
+<ParamField path="creditAccount" type="address" required>
+  Account to close
+</ParamField>
+
+<ParamField path="calls" type="MultiCall[]" required>
+  List of calls to perform before closing
+</ParamField>
+
+<Note>
+- Only the account owner can close their account
+- All calls are allowed except debt increase
+- Account must have zero debt after the multicall
+- Bot permissions are erased upon closure
+</Note>
+
+#### liquidateCreditAccount
+
+```solidity
+function liquidateCreditAccount(
+    address creditAccount,
+    address to,
+    MultiCall[] calldata calls,
+    bytes memory lossPolicyData
+) external
+```
+
+Liquidates an unhealthy or expired credit account.
+
+<ParamField path="creditAccount" type="address" required>
+  Account to liquidate
+</ParamField>
+
+<ParamField path="to" type="address" required>
+  Address to transfer underlying surplus to
+</ParamField>
+
+<ParamField path="calls" type="MultiCall[]" required>
+  List of calls to perform before liquidation
+</ParamField>
+
+<ParamField path="lossPolicyData" type="bytes" required>
+  Additional data to pass to the loss policy contract
+</ParamField>
+
+<Note>
+- Only `addCollateral`, `withdrawCollateral`, and adapter calls are allowed
+- Remaining token balances cannot increase during the multicall
+- If account has bad debt, liquidation must comply with loss policy
+- Premium and fees differ for expired vs unhealthy liquidations
+</Note>
+
+<Warning>
+Liquidator can fully seize non-enabled tokens. Unclaimed rewards from integrated protocols are at risk.
+</Warning>
+
+#### partiallyLiquidateCreditAccount
+
+```solidity
+function partiallyLiquidateCreditAccount(
+    address creditAccount,
+    address token,
+    uint256 repaidAmount,
+    uint256 minSeizedAmount,
+    address to,
+    PriceUpdate[] calldata priceUpdates
+) external returns (uint256 seizedAmount)
+```
+
+Partially liquidates a credit account's debt in exchange for discounted collateral.
+
+<ParamField path="creditAccount" type="address" required>
+  Credit account to liquidate
+</ParamField>
+
+<ParamField path="token" type="address" required>
+  Collateral token to seize (cannot be underlying)
+</ParamField>
+
+<ParamField path="repaidAmount" type="uint256" required>
+  Amount of underlying to repay
+</ParamField>
+
+<ParamField path="minSeizedAmount" type="uint256" required>
+  Minimum amount of token to seize (slippage protection)
+</ParamField>
+
+<ParamField path="to" type="address" required>
+  Account to withdraw seized token to
+</ParamField>
+
+<ParamField path="priceUpdates" type="PriceUpdate[]" required>
+  On-demand price feed updates to apply before calculations
+</ParamField>
+
+<ParamField path="seizedAmount" type="uint256">
+  Returns the amount of token seized
+</ParamField>
+
+<Note>
+- Requires approval for underlying from caller to credit manager
+- Uses same liquidation discount and fees as full liquidations
+- Runs collateral check after the operation
+- If token is a phantom token, it's withdrawn first and `depositedToken` is sent to liquidator
+</Note>
+
+### Multicall Functions
+
+#### multicall
+
+```solidity
+function multicall(
+    address creditAccount,
+    MultiCall[] calldata calls
+) external payable
+```
+
+Executes a batch of calls allowing users to manage their credit account.
+
+<ParamField path="creditAccount" type="address" required>
+  Account to perform calls on
+</ParamField>
+
+<ParamField path="calls" type="MultiCall[]" required>
+  List of calls to perform
+</ParamField>
+
+<Note>
+- Wraps any ETH sent and sends it back to caller
+- All operations are allowed
+- Runs collateral check after the multicall
+- Only the account owner can call this function
+</Note>
+
+#### botMulticall
+
+```solidity
+function botMulticall(
+    address creditAccount,
+    MultiCall[] calldata calls
+) external
+```
+
+Executes a batch of calls allowing an approved bot to manage a credit account.
+
+<ParamField path="creditAccount" type="address" required>
+  Account to perform calls on
+</ParamField>
+
+<ParamField path="calls" type="MultiCall[]" required>
+  List of calls to perform
+</ParamField>
+
+<Note>
+- Allowed calls are determined by permissions given by the account owner
+- Bot must not be forbidden and must have non-zero permissions
+- Runs collateral check after the multicall
+</Note>
+
+<Warning>
+Reverts if the calling bot is forbidden or has no permissions for the account.
+</Warning>
+
+## Multicall Operations
+
+The following operations can be included in multicall arrays:
+
+### onDemandPriceUpdates
+
+```solidity
+function onDemandPriceUpdates(PriceUpdate[] memory updates) external
+```
+
+Updates price feeds on-demand. Must be the first call in the multicall if present.
+
+<ParamField path="updates" type="PriceUpdate[]" required>
+  Array of price updates to apply
+</ParamField>
+
+### addCollateral
+
+```solidity
+function addCollateral(address token, uint256 amount) external
+```
+
+Adds collateral to the credit account.
+
+<ParamField path="token" type="address" required>
+  Token to add as collateral
+</ParamField>
+
+<ParamField path="amount" type="uint256" required>
+  Amount to add
+</ParamField>
+
+### addCollateralWithPermit
+
+```solidity
+function addCollateralWithPermit(
+    address token,
+    uint256 amount,
+    uint256 deadline,
+    uint8 v,
+    bytes32 r,
+    bytes32 s
+) external
+```
+
+Adds collateral using ERC20 permit for gasless approval.
+
+### withdrawCollateral
+
+```solidity
+function withdrawCollateral(
+    address token,
+    uint256 amount,
+    address to
+) external
+```
+
+Withdraws collateral from the credit account.
+
+<ParamField path="token" type="address" required>
+  Token to withdraw
+</ParamField>
+
+<ParamField path="amount" type="uint256" required>
+  Amount to withdraw (use `type(uint256).max` for max available minus 1)
+</ParamField>
+
+<ParamField path="to" type="address" required>
+  Address to transfer token to
+</ParamField>
+
+### increaseDebt
+
+```solidity
+function increaseDebt(uint256 amount) external
+```
+
+Borrows additional funds from the pool.
+
+<ParamField path="amount" type="uint256" required>
+  Amount of underlying to borrow
+</ParamField>
+
+<Note>
+Enables the "revert on forbidden tokens" flag, requiring safe collateral check.
+</Note>
+
+### decreaseDebt
+
+```solidity
+function decreaseDebt(uint256 amount) external
+```
+
+Repays debt to the pool.
+
+<ParamField path="amount" type="uint256" required>
+  Amount of underlying to repay
+</ParamField>
+
+### updateQuota
+
+```solidity
+function updateQuota(
+    address token,
+    int96 quotaChange,
+    uint96 minQuota
+) external
+```
+
+Increases or decreases quota for a token.
+
+<ParamField path="token" type="address" required>
+  Token to update quota for (cannot be underlying)
+</ParamField>
+
+<ParamField path="quotaChange" type="int96" required>
+  Requested quota change (positive to increase, negative to decrease)
+</ParamField>
+
+<ParamField path="minQuota" type="uint96" required>
+  Minimum resulting quota (slippage protection)
+</ParamField>
+
+<Warning>
+Increasing quota for forbidden tokens is not allowed.
+</Warning>
+
+### setBotPermissions
+
+```solidity
+function setBotPermissions(
+    address bot,
+    uint192 permissions
+) external
+```
+
+Sets permissions for a bot to manage the credit account.
+
+<ParamField path="bot" type="address" required>
+  Bot address
+</ParamField>
+
+<ParamField path="permissions" type="uint192" required>
+  Permission flags (cannot include `SET_BOT_PERMISSIONS_PERMISSION`)
+</ParamField>
+
+### storeExpectedBalances
+
+```solidity
+function storeExpectedBalances(BalanceDelta[] memory balanceDeltas) external
+```
+
+Stores expected balances for comparison after adapter calls.
+
+<ParamField path="balanceDeltas" type="BalanceDelta[]" required>
+  Array of token addresses and expected balance changes
+</ParamField>
+
+### compareBalances
+
+```solidity
+function compareBalances() external
+```
+
+Compares current balances with previously stored expected balances.
+
+<Warning>
+Reverts with `BalanceLessThanExpectedException` if any balance is below expected.
+</Warning>
+
+### setFullCheckParams
+
+```solidity
+function setFullCheckParams(
+    uint256[] memory collateralHints,
+    uint16 minHealthFactor
+) external
+```
+
+Sets custom parameters for the collateral check.
+
+<ParamField path="collateralHints" type="uint256[]" required>
+  Array of token masks to check first (for gas optimization)
+</ParamField>
+
+<ParamField path="minHealthFactor" type="uint16" required>
+  Custom health factor threshold in bps (must be >= 10000)
+</ParamField>
+
+## Configuration Functions
+
+### setExpirationDate
+
+```solidity
+function setExpirationDate(uint40 newExpirationDate) external
+```
+
+Sets the credit facade expiration timestamp.
+
+<ParamField path="newExpirationDate" type="uint40" required>
+  New expiration timestamp
+</ParamField>
+
+<Note>
+Only callable by credit configurator. Reverts if facade is not expirable.
+</Note>
+
+### setDebtLimits
+
+```solidity
+function setDebtLimits(
+    uint128 newMinDebt,
+    uint128 newMaxDebt,
+    uint8 newMaxDebtPerBlockMultiplier
+) external
+```
+
+Sets debt limits per credit account.
+
+<ParamField path="newMinDebt" type="uint128" required>
+  New minimum debt amount
+</ParamField>
+
+<ParamField path="newMaxDebt" type="uint128" required>
+  New maximum debt amount
+</ParamField>
+
+<ParamField path="newMaxDebtPerBlockMultiplier" type="uint8" required>
+  New max debt per block multiplier (`type(uint8).max` to disable check)
+</ParamField>
+
+<Warning>
+Prevents further borrowing in the current block unless the check is disabled.
+</Warning>
+
+### setLossPolicy
+
+```solidity
+function setLossPolicy(address newLossPolicy) external
+```
+
+Sets a new loss policy contract.
+
+<ParamField path="newLossPolicy" type="address" required>
+  New loss policy address
+</ParamField>
+
+### setTokenAllowance
+
+```solidity
+function setTokenAllowance(
+    address token,
+    AllowanceAction allowance
+) external
+```
+
+Changes a token's forbidden status.
+
+<ParamField path="token" type="address" required>
+  Token to change status for
+</ParamField>
+
+<ParamField path="allowance" type="AllowanceAction" required>
+  Either `ALLOW` or `FORBID`
+</ParamField>
+
+### Pause/Unpause
+
+```solidity
+function pause() external
+function unpause() external
+```
+
+Pauses or unpauses the contract.
+
+<Note>
+- `pause()` can only be called by pausable admins
+- `unpause()` can only be called by unpausable admins
+- When paused, liquidations remain open only to emergency liquidators
+</Note>
+
+## Data Structures
+
+### MultiCall
+
+```solidity
+struct MultiCall {
+    address target;  // Call target (facade or adapter)
+    bytes callData;  // Call data
+}
+```
+
+### DebtLimits
+
+```solidity
+struct DebtLimits {
+    uint128 minDebt;  // Minimum debt per account
+    uint128 maxDebt;  // Maximum debt per account
+}
+```
+
+### FullCheckParams
+
+```solidity
+struct FullCheckParams {
+    uint256[] collateralHints;  // Optional token masks
+    uint16 minHealthFactor;     // Health factor threshold in bps
+}
+```
+
+## Events
+
+### OpenCreditAccount
+
+```solidity
+event OpenCreditAccount(
+    address indexed creditAccount,
+    address indexed onBehalfOf,
+    address indexed caller,
+    uint256 referralCode
+)
+```
+
+### CloseCreditAccount
+
+```solidity
+event CloseCreditAccount(
+    address indexed creditAccount,
+    address indexed borrower
+)
+```
+
+### LiquidateCreditAccount
+
+```solidity
+event LiquidateCreditAccount(
+    address indexed creditAccount,
+    address indexed liquidator,
+    address to,
+    uint256 remainingFunds
+)
+```
+
+### PartiallyLiquidateCreditAccount
+
+```solidity
+event PartiallyLiquidateCreditAccount(
+    address indexed creditAccount,
+    address indexed token,
+    address indexed liquidator,
+    uint256 repaidDebt,
+    uint256 seizedCollateral,
+    uint256 fee
+)
+```
+
+### StartMultiCall / FinishMultiCall
+
+```solidity
+event StartMultiCall(address indexed creditAccount, address indexed caller)
+event FinishMultiCall()
+```
+
+### Execute
+
+```solidity
+event Execute(
+    address indexed creditAccount,
+    address indexed targetContract
+)
+```
+
+Emitted when an external contract call is made during multicall.
+
+## Example Usage
+
+### Opening an Account and Borrowing
+
+```solidity
+MultiCall[] memory calls = new MultiCall[](2);
+
+// Add collateral
+calls[0] = MultiCall({
+    target: address(creditFacade),
+    callData: abi.encodeCall(
+        ICreditFacadeV3Multicall.addCollateral,
+        (USDC, 10000e6)
+    )
+});
+
+// Increase debt
+calls[1] = MultiCall({
+    target: address(creditFacade),
+    callData: abi.encodeCall(
+        ICreditFacadeV3Multicall.increaseDebt,
+        (5000e6)
+    )
+});
+
+address account = creditFacade.openCreditAccount{
+    value: 0
+}(msg.sender, calls, 0);
+```
+
+### Multicall with Adapter
+
+```solidity
+MultiCall[] memory calls = new MultiCall[](1);
+
+// Call Uniswap adapter to swap
+calls[0] = MultiCall({
+    target: uniswapAdapter,
+    callData: abi.encodeCall(
+        IUniswapV3Adapter.exactInputSingle,
+        (params)
+    )
+});
+
+creditFacade.multicall(creditAccount, calls);
+```
+
+### Closing an Account
+
+```solidity
+MultiCall[] memory calls = new MultiCall[](1);
+
+// Decrease debt to zero
+calls[0] = MultiCall({
+    target: address(creditFacade),
+    callData: abi.encodeCall(
+        ICreditFacadeV3Multicall.decreaseDebt,
+        (type(uint256).max)
+    )
+});
+
+creditFacade.closeCreditAccount(creditAccount, calls);
+```

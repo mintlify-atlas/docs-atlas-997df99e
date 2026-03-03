@@ -1,0 +1,323 @@
+---
+title: PriceOracleV3
+description: Central price oracle that routes price queries to underlying price feeds with staleness checks and safe pricing
+---
+
+## Overview
+
+PriceOracleV3 acts as a router that dispatches price queries to corresponding price feeds. It provides both standard and "safe" pricing mechanisms with built-in staleness and sanity checks.
+
+**Contract Type:** `PRICE_ORACLE`
+
+**Version:** 3.10
+
+**Source:** [PriceOracleV3.sol](https://github.com/Gearbox-protocol/core-v3/blob/main/contracts/core/PriceOracleV3.sol)
+
+## Key Features
+
+### Dual Price Feed System
+
+The oracle supports two price feeds per token:
+- **Main Price Feed**: Primary price source for regular operations
+- **Reserve Price Feed**: Secondary price source for safe pricing calculations
+
+### Safe Pricing
+
+Safe pricing uses the minimum of main and reserve feed answers. This is primarily used during collateral checks after operations that allow users to offload potentially mispriced tokens and withdraw underlying.
+
+<Note>
+Reserve price feeds are used to upper-bound main price feeds during collateral checks. They should not be used for general collateral evaluation or liquidation decisions.
+</Note>
+
+### Chainlink Compatibility
+
+All price feeds must:
+- Implement Chainlink's `latestRoundData` interface
+- Return answers with 8 decimals
+- Optionally implement their own price checks (indicated by `skipPriceCheck = true`)
+
+## Core Functions
+
+### Price Queries
+
+#### getPrice
+
+```solidity
+function getPrice(address token) external view returns (uint256 price)
+```
+
+Returns the token's price in USD with 8 decimals from its main price feed.
+
+<ParamField path="token" type="address">
+  Token address to get price for
+</ParamField>
+
+**Returns:** Price in USD (8 decimals)
+
+**Reverts:** `PriceFeedDoesNotExistException` if no price feed is configured for the token
+
+#### getSafePrice
+
+```solidity
+function getSafePrice(address token) external view returns (uint256 price)
+```
+
+Returns the token's safe price in USD (8 decimals) computed as the minimum between main and reserve feed prices.
+
+<ParamField path="token" type="address">
+  Token address to get safe price for
+</ParamField>
+
+**Returns:** Safe price in USD (8 decimals), or 0 if no reserve feed is configured
+
+#### getReservePrice
+
+```solidity
+function getReservePrice(address token) external view returns (uint256 price)
+```
+
+Returns the token's price from its reserve price feed.
+
+<ParamField path="token" type="address">
+  Token address to get reserve price for
+</ParamField>
+
+**Returns:** Reserve price in USD (8 decimals)
+
+### Price Conversions
+
+#### convertToUSD
+
+```solidity
+function convertToUSD(uint256 amount, address token) external view returns (uint256)
+```
+
+Converts a token amount to USD value (8 decimals).
+
+<ParamField path="amount" type="uint256">
+  Amount of token to convert
+</ParamField>
+
+<ParamField path="token" type="address">
+  Token address
+</ParamField>
+
+#### convertFromUSD
+
+```solidity
+function convertFromUSD(uint256 amount, address token) external view returns (uint256)
+```
+
+Converts a USD amount (8 decimals) to token amount.
+
+<ParamField path="amount" type="uint256">
+  USD amount to convert (8 decimals)
+</ParamField>
+
+<ParamField path="token" type="address">
+  Token address
+</ParamField>
+
+#### convert
+
+```solidity
+function convert(uint256 amount, address tokenFrom, address tokenTo) external view returns (uint256)
+```
+
+Converts an amount from one token to another.
+
+<ParamField path="amount" type="uint256">
+  Amount to convert
+</ParamField>
+
+<ParamField path="tokenFrom" type="address">
+  Source token address
+</ParamField>
+
+<ParamField path="tokenTo" type="address">
+  Destination token address
+</ParamField>
+
+#### safeConvertToUSD
+
+```solidity
+function safeConvertToUSD(uint256 amount, address token) external view returns (uint256)
+```
+
+Converts a token amount to USD using safe price (minimum of main and reserve feeds).
+
+<ParamField path="amount" type="uint256">
+  Amount of token to convert
+</ParamField>
+
+<ParamField path="token" type="address">
+  Token address
+</ParamField>
+
+## Configuration Functions
+
+### setPriceFeed
+
+```solidity
+function setPriceFeed(
+    address token,
+    address priceFeed,
+    uint32 stalenessPeriod
+) external
+```
+
+Sets the main price feed for a token. Only callable by configurator.
+
+<ParamField path="token" type="address">
+  Token address (must be non-zero)
+</ParamField>
+
+<ParamField path="priceFeed" type="address">
+  Price feed address (must be non-zero)
+</ParamField>
+
+<ParamField path="stalenessPeriod" type="uint32">
+  Period in seconds after which the price feed answer is considered stale
+</ParamField>
+
+<Note>
+If the new main price feed coincides with the reserve feed, the reserve feed is automatically unset.
+</Note>
+
+**Emits:** `SetPriceFeed(token, priceFeed, stalenessPeriod, skipCheck)`
+
+### setReservePriceFeed
+
+```solidity
+function setReservePriceFeed(
+    address token,
+    address priceFeed,
+    uint32 stalenessPeriod
+) external
+```
+
+Sets the reserve price feed for a token. Only callable by configurator.
+
+<ParamField path="token" type="address">
+  Token address (must be non-zero)
+</ParamField>
+
+<ParamField path="priceFeed" type="address">
+  Reserve price feed address (must be non-zero)
+</ParamField>
+
+<ParamField path="stalenessPeriod" type="uint32">
+  Staleness period in seconds
+</ParamField>
+
+<Warning>
+The main price feed for the token must already be set before calling this function.
+</Warning>
+
+**Emits:** `SetReservePriceFeed(token, priceFeed, stalenessPeriod, skipCheck)`
+
+## View Functions
+
+### getTokens
+
+```solidity
+function getTokens() external view returns (address[] memory)
+```
+
+Returns all tokens that have price feeds configured.
+
+### priceFeedParams
+
+```solidity
+function priceFeedParams(address token) external view returns (PriceFeedParams memory)
+```
+
+Returns the main price feed parameters for a token.
+
+**Returns:** `PriceFeedParams` struct containing:
+- `priceFeed`: Price feed address
+- `stalenessPeriod`: Staleness period in seconds
+- `skipCheck`: Whether the feed implements its own checks
+- `tokenDecimals`: Token decimals
+
+### reservePriceFeedParams
+
+```solidity
+function reservePriceFeedParams(address token) external view returns (PriceFeedParams memory)
+```
+
+Returns the reserve price feed parameters for a token.
+
+## Implementation Details
+
+### Token Validation
+
+When a price feed is set for a new token, the contract validates that:
+1. The token address is a contract
+2. The token implements the `decimals()` function
+3. Token decimals are between 1 and 18 (inclusive)
+
+### Price Feed Validation
+
+When adding a price feed, the contract:
+1. Validates the price feed has a valid implementation
+2. Checks if the feed implements its own safety checks
+3. Stores the validation result in the `skipCheck` flag
+
+### Reserve Key Generation
+
+Reserve price feed parameters are stored using a special key derived from the token address:
+
+```solidity
+function _getTokenReserveKey(address token) internal pure returns (address key) {
+    assembly {
+        mstore(0x0, or("RESERVE", shl(0x28, token)))
+        key := keccak256(0x0, 0x1b)
+    }
+}
+```
+
+## Events
+
+### SetPriceFeed
+
+```solidity
+event SetPriceFeed(
+    address indexed token,
+    address indexed priceFeed,
+    uint32 stalenessPeriod,
+    bool skipCheck
+)
+```
+
+Emitted when a main price feed is set for a token.
+
+### SetReservePriceFeed
+
+```solidity
+event SetReservePriceFeed(
+    address indexed token,
+    address indexed priceFeed,
+    uint32 stalenessPeriod,
+    bool skipCheck
+)
+```
+
+Emitted when a reserve price feed is set for a token.
+
+## Usage Example
+
+```solidity
+// Get price for a token
+IPriceOracleV3 oracle = IPriceOracleV3(priceOracleAddress);
+uint256 price = oracle.getPrice(tokenAddress);
+
+// Convert 1000 tokens to USD
+uint256 usdValue = oracle.convertToUSD(1000 * 10**18, tokenAddress);
+
+// Get safe price (minimum of main and reserve)
+uint256 safePrice = oracle.getSafePrice(tokenAddress);
+
+// Convert between tokens
+uint256 amountOut = oracle.convert(amountIn, tokenFrom, tokenTo);
+```

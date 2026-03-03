@@ -1,0 +1,661 @@
+---
+title: GearStakingV3
+description: Staking contract for GEAR tokens with voting power delegation and epoch-based withdrawal system
+---
+
+## Overview
+
+GearStakingV3 allows users to stake GEAR tokens to participate in governance voting. It features an epoch-based withdrawal system with a 4-epoch delay, migration support for contract upgrades, and flexible multi-vote functionality.
+
+**Contract Type:** `GEAR_STAKING`
+
+**Version:** 3.10
+
+**Source:** [GearStakingV3.sol](https://github.com/Gearbox-protocol/core-v3/blob/main/contracts/core/GearStakingV3.sol)
+
+## Key Features
+
+### Epoch-Based Withdrawals
+
+Withdrawals follow a 4-epoch delay model:
+- Users unstake GEAR and schedule a withdrawal
+- GEAR becomes claimable after 4 epochs (approximately 4 weeks)
+- Multiple withdrawals can be scheduled simultaneously
+- Mature withdrawals are automatically claimed when interacting with the contract
+
+### Voting Power Management
+
+Staked GEAR can be used for voting in approved voting contracts:
+- Users maintain an `available` balance for voting or unstaking
+- Voting locks tokens in external voting contracts
+- Unvoting returns tokens to available balance
+- Multi-vote allows atomic voting across multiple contracts
+
+### Contract Migration
+
+Supports seamless migration to upgraded staking contracts:
+- Users can migrate staked GEAR without waiting for withdrawal delay
+- Migrator/successor relationship ensures safe upgrades
+- Votes can be applied before and after migration
+
+## Constants
+
+### firstEpochTimestamp
+
+```solidity
+uint256 public constant firstEpochTimestamp = FIRST_EPOCH_TIMESTAMP
+```
+
+Timestamp of the first voting epoch (defined in Constants library).
+
+### Epoch Parameters
+
+- **EPOCH_LENGTH**: Duration of each epoch (typically 1 week)
+- **EPOCHS_TO_WITHDRAW**: Number of epochs until withdrawal is claimable (4 epochs)
+
+## Core Functions
+
+### Staking
+
+#### deposit
+
+```solidity
+function deposit(uint96 amount, MultiVote[] calldata votes) external
+```
+
+Stakes GEAR tokens and optionally performs a sequence of votes.
+
+<ParamField path="amount" type="uint96">
+  Amount of GEAR to stake
+</ParamField>
+
+<ParamField path="votes" type="MultiVote[]">
+  Array of votes to perform after staking (can be empty)
+</ParamField>
+
+**Requires:** Approval from `msg.sender` for GEAR to this contract
+
+**Emits:** `DepositGear(msg.sender, amount)`
+
+**Example:**
+```solidity
+// Stake 1000 GEAR without voting
+GEAR.approve(stakingContract, 1000e18);
+IGearStakingV3(stakingContract).deposit(1000e18, new MultiVote[](0));
+
+// Stake and vote in one transaction
+MultiVote[] memory votes = new MultiVote[](1);
+votes[0] = MultiVote({
+    votingContract: gaugeAddress,
+    voteAmount: 500e18,
+    isIncrease: true,
+    extraData: abi.encode(poolAddress)
+});
+IGearStakingV3(stakingContract).deposit(1000e18, votes);
+```
+
+#### depositWithPermit
+
+```solidity
+function depositWithPermit(
+    uint96 amount,
+    MultiVote[] calldata votes,
+    uint256 deadline,
+    uint8 v,
+    bytes32 r,
+    bytes32 s
+) external
+```
+
+Same as `deposit` but uses EIP-2612 permit for gasless approval.
+
+<ParamField path="amount" type="uint96">
+  Amount of GEAR to stake
+</ParamField>
+
+<ParamField path="votes" type="MultiVote[]">
+  Array of votes to perform
+</ParamField>
+
+<ParamField path="deadline" type="uint256">
+  Permit deadline timestamp
+</ParamField>
+
+<ParamField path="v" type="uint8">
+  Permit signature v parameter
+</ParamField>
+
+<ParamField path="r" type="bytes32">
+  Permit signature r parameter
+</ParamField>
+
+<ParamField path="s" type="bytes32">
+  Permit signature s parameter
+</ParamField>
+
+### Voting
+
+#### multivote
+
+```solidity
+function multivote(MultiVote[] calldata votes) external
+```
+
+Performs a sequence of votes across multiple voting contracts.
+
+<ParamField path="votes" type="MultiVote[]">
+  Array of votes to perform
+</ParamField>
+
+**Reverts:**
+- `VotingContractNotAllowedException` if voting contract is not allowed
+- `InsufficientBalanceException` if insufficient available balance
+
+**Example:**
+```solidity
+MultiVote[] memory votes = new MultiVote[](2);
+
+// Vote 500 GEAR in gauge 1
+votes[0] = MultiVote({
+    votingContract: gauge1,
+    voteAmount: 500e18,
+    isIncrease: true,
+    extraData: ""
+});
+
+// Vote 300 GEAR in gauge 2
+votes[1] = MultiVote({
+    votingContract: gauge2,
+    voteAmount: 300e18,
+    isIncrease: true,
+    extraData: ""
+});
+
+IGearStakingV3(stakingContract).multivote(votes);
+```
+
+### Withdrawals
+
+#### withdraw
+
+```solidity
+function withdraw(
+    uint96 amount,
+    address to,
+    MultiVote[] calldata votes
+) external
+```
+
+Unstakes GEAR, schedules withdrawal for 4 epochs later, claims mature withdrawals, and optionally performs votes.
+
+<ParamField path="amount" type="uint96">
+  Amount of GEAR to unstake and schedule for withdrawal
+</ParamField>
+
+<ParamField path="to" type="address">
+  Address to send claimable GEAR (from previously scheduled withdrawals)
+</ParamField>
+
+<ParamField path="votes" type="MultiVote[]">
+  Array of votes to perform before withdrawing
+</ParamField>
+
+**Reverts:** `InsufficientBalanceException` if insufficient available balance
+
+**Emits:**
+- `ScheduleGearWithdrawal(msg.sender, amount)` for scheduled withdrawal
+- `ClaimGearWithdrawal(msg.sender, to, totalClaimable)` if there are mature withdrawals
+
+<Note>
+Scheduled withdrawals become claimable 4 epochs (~4 weeks) after scheduling.
+</Note>
+
+**Example:**
+```solidity
+// Withdraw 500 GEAR and claim any mature withdrawals
+IGearStakingV3(stakingContract).withdraw(
+    500e18,
+    msg.sender,
+    new MultiVote[](0)
+);
+```
+
+#### claimWithdrawals
+
+```solidity
+function claimWithdrawals(address to) external
+```
+
+Claims all mature withdrawals without scheduling new ones.
+
+<ParamField path="to" type="address">
+  Address to send claimable GEAR
+</ParamField>
+
+**Emits:** `ClaimGearWithdrawal(msg.sender, to, amount)` if there are claimable withdrawals
+
+**Example:**
+```solidity
+// Claim all mature withdrawals
+IGearStakingV3(stakingContract).claimWithdrawals(msg.sender);
+```
+
+### Migration
+
+#### migrate
+
+```solidity
+function migrate(
+    uint96 amount,
+    MultiVote[] calldata votesBefore,
+    MultiVote[] calldata votesAfter
+) external
+```
+
+Migrates staked GEAR to a successor staking contract, bypassing the withdrawal delay.
+
+<ParamField path="amount" type="uint96">
+  Amount of staked GEAR to migrate
+</ParamField>
+
+<ParamField path="votesBefore" type="MultiVote[]">
+  Votes to apply in current contract before migration
+</ParamField>
+
+<ParamField path="votesAfter" type="MultiVote[]">
+  Votes to apply in successor contract after migration
+</ParamField>
+
+**Reverts:**
+- If no successor is set
+- `InsufficientBalanceException` if insufficient available balance
+
+**Emits:** `MigrateGear(msg.sender, successor, amount)`
+
+<Warning>
+Only available when a successor contract has been set by governance.
+</Warning>
+
+**Example:**
+```solidity
+// Migrate 1000 GEAR to new staking contract
+MultiVote[] memory votesAfter = new MultiVote[](1);
+votesAfter[0] = MultiVote({
+    votingContract: newGaugeAddress,
+    voteAmount: 1000e18,
+    isIncrease: true,
+    extraData: ""
+});
+
+IGearStakingV3(stakingContract).migrate(
+    1000e18,
+    new MultiVote[](0),
+    votesAfter
+);
+```
+
+#### depositOnMigration
+
+```solidity
+function depositOnMigration(
+    uint96 amount,
+    address onBehalfOf,
+    MultiVote[] calldata votes
+) external
+```
+
+Deposits GEAR on behalf of a user during migration from a previous staking contract.
+
+<ParamField path="amount" type="uint96">
+  Amount of GEAR to deposit
+</ParamField>
+
+<ParamField path="onBehalfOf" type="address">
+  User address to deposit for
+</ParamField>
+
+<ParamField path="votes" type="MultiVote[]">
+  Votes to apply after migration
+</ParamField>
+
+**Access:** Only callable by the migrator contract
+
+## View Functions
+
+### getCurrentEpoch
+
+```solidity
+function getCurrentEpoch() public view returns (uint16)
+```
+
+Returns the current global voting epoch number.
+
+**Example:**
+```solidity
+uint16 epoch = IGearStakingV3(stakingContract).getCurrentEpoch();
+// epoch = (block.timestamp - firstEpochTimestamp) / EPOCH_LENGTH + 1
+```
+
+### balanceOf
+
+```solidity
+function balanceOf(address user) external view returns (uint256)
+```
+
+Returns the total amount of user's staked GEAR (includes both available and locked in votes).
+
+<ParamField path="user" type="address">
+  User address
+</ParamField>
+
+**Example:**
+```solidity
+uint256 totalStaked = IGearStakingV3(stakingContract).balanceOf(userAddress);
+```
+
+### availableBalance
+
+```solidity
+function availableBalance(address user) external view returns (uint256)
+```
+
+Returns user's balance available for voting or unstaking.
+
+<ParamField path="user" type="address">
+  User address
+</ParamField>
+
+**Example:**
+```solidity
+uint256 available = IGearStakingV3(stakingContract).availableBalance(userAddress);
+```
+
+### getWithdrawableAmounts
+
+```solidity
+function getWithdrawableAmounts(address user)
+    external
+    view
+    returns (
+        uint256 withdrawableNow,
+        uint256[EPOCHS_TO_WITHDRAW] memory withdrawableInEpochs
+    )
+```
+
+Returns user's withdrawable amounts now and over the next 4 epochs.
+
+<ParamField path="user" type="address">
+  User address
+</ParamField>
+
+**Returns:**
+- `withdrawableNow`: Amount claimable immediately
+- `withdrawableInEpochs`: Array of amounts claimable in epochs 1-4
+
+**Example:**
+```solidity
+(
+    uint256 now,
+    uint256[4] memory future
+) = IGearStakingV3(stakingContract).getWithdrawableAmounts(userAddress);
+
+// now = amount claimable immediately
+// future[0] = amount claimable in 1 epoch
+// future[1] = amount claimable in 2 epochs
+// future[2] = amount claimable in 3 epochs  
+// future[3] = amount claimable in 4 epochs
+```
+
+### gear
+
+```solidity
+function gear() external view returns (address)
+```
+
+Returns the address of the GEAR token.
+
+## Configuration Functions
+
+### setVotingContractStatus
+
+```solidity
+function setVotingContractStatus(
+    address votingContract,
+    VotingContractStatus status
+) external
+```
+
+Sets the status of a voting contract.
+
+<ParamField path="votingContract" type="address">
+  Voting contract address
+</ParamField>
+
+<ParamField path="status" type="VotingContractStatus">
+  New status: NOT_ALLOWED, ALLOWED, or UNVOTE_ONLY
+</ParamField>
+
+**Access:** Only callable by owner (Cross Chain Governance Proxy)
+
+**Emits:** `SetVotingContractStatus(votingContract, status)`
+
+**Status Values:**
+- `NOT_ALLOWED`: Cannot vote or unvote
+- `ALLOWED`: Can both vote and unvote
+- `UNVOTE_ONLY`: Can only unvote (used for deprecated contracts)
+
+### setSuccessor
+
+```solidity
+function setSuccessor(address newSuccessor) external
+```
+
+Sets a new successor contract for migration.
+
+<ParamField path="newSuccessor" type="address">
+  Address of the new staking contract
+</ParamField>
+
+**Access:** Only callable by owner
+
+**Reverts:** `IncompatibleSuccessorException` if the successor doesn't have this contract as migrator
+
+**Emits:** `SetSuccessor(newSuccessor)`
+
+### setMigrator
+
+```solidity
+function setMigrator(address newMigrator) external
+```
+
+Sets a new migrator contract.
+
+<ParamField path="newMigrator" type="address">
+  Address of the previous staking contract
+</ParamField>
+
+**Access:** Only callable by owner
+
+**Emits:** `SetMigrator(newMigrator)`
+
+## Structures
+
+### MultiVote
+
+```solidity
+struct MultiVote {
+    address votingContract;  // Contract to submit vote to
+    uint96 voteAmount;       // Amount of GEAR to vote with
+    bool isIncrease;         // true = vote, false = unvote
+    bytes extraData;         // Additional data for voting contract
+}
+```
+
+Represents a single vote operation in a sequence.
+
+### UserVoteLockData
+
+```solidity
+struct UserVoteLockData {
+    uint96 totalStaked;  // Total amount staked (available + locked)
+    uint96 available;    // Amount available for voting/unstaking
+}
+```
+
+Stores user's staking and voting data.
+
+### WithdrawalData
+
+```solidity
+struct WithdrawalData {
+    uint96[EPOCHS_TO_WITHDRAW] withdrawalsPerEpoch;  // Withdrawals per epoch
+    uint16 epochLastUpdate;                          // Last update epoch
+}
+```
+
+Stores user's scheduled withdrawal data.
+
+### VotingContractStatus
+
+```solidity
+enum VotingContractStatus {
+    NOT_ALLOWED,  // Cannot vote or unvote
+    ALLOWED,      // Can both vote and unvote
+    UNVOTE_ONLY   // Can only unvote
+}
+```
+
+## Events
+
+### DepositGear
+
+```solidity
+event DepositGear(address indexed user, uint256 amount)
+```
+
+Emitted when a user deposits GEAR.
+
+### MigrateGear
+
+```solidity
+event MigrateGear(
+    address indexed user,
+    address indexed successor,
+    uint256 amount
+)
+```
+
+Emitted when a user migrates GEAR to a successor contract.
+
+### ScheduleGearWithdrawal
+
+```solidity
+event ScheduleGearWithdrawal(address indexed user, uint256 amount)
+```
+
+Emitted when a user schedules a withdrawal.
+
+### ClaimGearWithdrawal
+
+```solidity
+event ClaimGearWithdrawal(
+    address indexed user,
+    address to,
+    uint256 amount
+)
+```
+
+Emitted when a user claims a mature withdrawal.
+
+### SetVotingContractStatus
+
+```solidity
+event SetVotingContractStatus(
+    address indexed votingContract,
+    VotingContractStatus status
+)
+```
+
+Emitted when a voting contract's status changes.
+
+### SetSuccessor
+
+```solidity
+event SetSuccessor(address indexed successor)
+```
+
+Emitted when a successor contract is set.
+
+### SetMigrator
+
+```solidity
+event SetMigrator(address indexed migrator)
+```
+
+Emitted when a migrator contract is set.
+
+## Withdrawal System Details
+
+### Epoch-Based Delay
+
+Withdrawals use a 4-epoch sliding window:
+
+```
+Epoch:     N    N+1   N+2   N+3   N+4
+           │     │     │     │     │
+Schedule ──┘                       └── Claimable
+```
+
+When you schedule a withdrawal at epoch N, it becomes claimable at epoch N+4.
+
+### Automatic Processing
+
+The contract automatically processes pending withdrawals when users interact with it:
+- Calling `withdraw()` claims mature withdrawals before scheduling new ones
+- Calling `claimWithdrawals()` claims all mature withdrawals
+- The withdrawal queue "shifts" forward based on epochs elapsed
+
+### Multiple Scheduled Withdrawals
+
+Users can have withdrawals scheduled for multiple future epochs:
+```
+withdrawalsPerEpoch[0] = amount claimable in 1 epoch
+withdrawalsPerEpoch[1] = amount claimable in 2 epochs
+withdrawalsPerEpoch[2] = amount claimable in 3 epochs
+withdrawalsPerEpoch[3] = amount claimable in 4 epochs
+```
+
+## Usage Example
+
+```solidity
+IGearStakingV3 staking = IGearStakingV3(stakingAddress);
+
+// 1. Stake GEAR
+GEAR.approve(stakingAddress, 1000e18);
+staking.deposit(1000e18, new MultiVote[](0));
+
+// 2. Vote in gauge
+MultiVote[] memory votes = new MultiVote[](1);
+votes[0] = MultiVote({
+    votingContract: gaugeAddress,
+    voteAmount: 500e18,
+    isIncrease: true,
+    extraData: abi.encode(poolAddress)
+});
+staking.multivote(votes);
+
+// 3. Check balances
+uint256 total = staking.balanceOf(msg.sender);      // 1000e18
+uint256 available = staking.availableBalance(msg.sender); // 500e18
+
+// 4. Withdraw (schedules for 4 epochs)
+staking.withdraw(200e18, msg.sender, new MultiVote[](0));
+
+// 5. Check withdrawable amounts
+(uint256 now, uint256[4] memory future) = staking.getWithdrawableAmounts(
+    msg.sender
+);
+
+// 6. After 4 epochs, claim
+staking.claimWithdrawals(msg.sender);
+```

@@ -1,0 +1,645 @@
+---
+title: CreditManagerV3
+description: Core logic for credit accounts management in Gearbox Protocol V3
+---
+
+## Overview
+
+The Credit Manager V3 implements the core logic for managing credit accounts in Gearbox Protocol. It handles account lifecycle (opening, closing, liquidation), debt management, collateral operations, and collateral checks. The contract is not directly accessible to users or the DAO - all interactions must go through the Credit Facade V3 or Credit Configurator V3.
+
+**Contract Location**: `contracts/credit/CreditManagerV3.sol`
+
+**Interface**: `ICreditManagerV3.sol`
+
+## Key Features
+
+- Credit account lifecycle management (open, close, liquidate)
+- Debt increase/decrease operations
+- Collateral token management
+- Health factor and collateral checks
+- Quota system for additional borrowing
+- Adapter-based protocol integrations
+- Liquidation threshold ramping
+
+## State Variables
+
+### Immutable Variables
+
+<ParamField path="version" type="uint256">
+  Contract version (always returns `3_10`)
+</ParamField>
+
+<ParamField path="accountFactory" type="address">
+  Account factory contract address for deploying credit accounts
+</ParamField>
+
+<ParamField path="underlying" type="address">
+  Address of the underlying token (e.g., USDC, DAI)
+</ParamField>
+
+<ParamField path="pool" type="address">
+  Address of the pool the credit manager is connected to
+</ParamField>
+
+<ParamField path="maxEnabledTokens" type="uint8">
+  Maximum number of tokens that can be enabled as collateral on a credit account
+</ParamField>
+
+<ParamField path="ltUnderlying" type="uint16">
+  Liquidation threshold for the underlying token in basis points
+</ParamField>
+
+<ParamField path="feeInterest" type="uint16">
+  Percentage of accrued interest taken by the protocol as profit (in bps)
+</ParamField>
+
+### Mutable Variables
+
+<ParamField path="creditFacade" type="address">
+  Address of the connected credit facade
+</ParamField>
+
+<ParamField path="creditConfigurator" type="address">
+  Address of the connected credit configurator
+</ParamField>
+
+<ParamField path="priceOracle" type="address">
+  Price oracle contract address
+</ParamField>
+
+<ParamField path="collateralTokensCount" type="uint8">
+  Number of known collateral tokens
+</ParamField>
+
+<ParamField path="feeLiquidation" type="uint16">
+  Percentage of liquidated account value taken by the protocol as profit (in bps)
+</ParamField>
+
+<ParamField path="liquidationDiscount" type="uint16">
+  Percentage of liquidated account value used to repay debt (in bps)
+</ParamField>
+
+## Core Functions
+
+### Account Management
+
+#### openCreditAccount
+
+```solidity
+function openCreditAccount(address onBehalfOf)
+    external
+    returns (address creditAccount)
+```
+
+Opens a new credit account for the specified owner.
+
+<ParamField path="onBehalfOf" type="address" required>
+  Owner of the newly opened credit account
+</ParamField>
+
+<ParamField path="creditAccount" type="address">
+  Returns the address of the newly opened credit account
+</ParamField>
+
+<Note>
+Only callable by the credit facade. The account starts with underlying token enabled and zero debt.
+</Note>
+
+#### closeCreditAccount
+
+```solidity
+function closeCreditAccount(address creditAccount) external
+```
+
+Closes a credit account. The account must have zero debt before closing.
+
+<ParamField path="creditAccount" type="address" required>
+  Account to close
+</ParamField>
+
+<Warning>
+Reverts if the credit account has non-zero debt.
+</Warning>
+
+#### liquidateCreditAccount
+
+```solidity
+function liquidateCreditAccount(
+    address creditAccount,
+    CollateralDebtData calldata collateralDebtData,
+    address to,
+    bool isExpired
+) external returns (uint256 remainingFunds, uint256 loss)
+```
+
+Liquidates a credit account, repaying debt and distributing remaining funds.
+
+<ParamField path="creditAccount" type="address" required>
+  Account to liquidate
+</ParamField>
+
+<ParamField path="collateralDebtData" type="CollateralDebtData" required>
+  Struct with account's debt and collateral data from `calcDebtAndCollateral`
+</ParamField>
+
+<ParamField path="to" type="address" required>
+  Address to transfer underlying surplus to
+</ParamField>
+
+<ParamField path="isExpired" type="bool" required>
+  Whether this is an expired account liquidation (uses lower premium)
+</ParamField>
+
+<ParamField path="remainingFunds" type="uint256">
+  Returns total value of assets left on the account after liquidation
+</ParamField>
+
+<ParamField path="loss" type="uint256">
+  Returns loss incurred on liquidation
+</ParamField>
+
+### Debt Management
+
+#### manageDebt
+
+```solidity
+function manageDebt(
+    address creditAccount,
+    uint256 amount,
+    uint256 enabledTokensMask,
+    ManageDebtAction action
+) external returns (uint256 newDebt, uint256, uint256)
+```
+
+Increases or decreases a credit account's debt.
+
+<ParamField path="creditAccount" type="address" required>
+  Account to manage debt for
+</ParamField>
+
+<ParamField path="amount" type="uint256" required>
+  Amount of underlying to change the total debt by
+</ParamField>
+
+<ParamField path="enabledTokensMask" type="uint256" required>
+  Bitmask of account's enabled collateral tokens
+</ParamField>
+
+<ParamField path="action" type="ManageDebtAction" required>
+  Either `INCREASE_DEBT` or `DECREASE_DEBT`
+</ParamField>
+
+<ParamField path="newDebt" type="uint256">
+  Returns the debt principal after update
+</ParamField>
+
+### Collateral Operations
+
+#### addCollateral
+
+```solidity
+function addCollateral(
+    address payer,
+    address creditAccount,
+    address token,
+    uint256 amount
+) external returns (uint256)
+```
+
+Adds collateral to a credit account.
+
+<ParamField path="payer" type="address" required>
+  Address to transfer token from
+</ParamField>
+
+<ParamField path="creditAccount" type="address" required>
+  Account to add collateral to
+</ParamField>
+
+<ParamField path="token" type="address" required>
+  Token to add as collateral (must be recognized by credit manager)
+</ParamField>
+
+<ParamField path="amount" type="uint256" required>
+  Amount to add
+</ParamField>
+
+<Note>
+Requires approval for `token` from `payer` to the credit manager.
+</Note>
+
+#### withdrawCollateral
+
+```solidity
+function withdrawCollateral(
+    address creditAccount,
+    address token,
+    uint256 amount,
+    address to
+) external returns (uint256)
+```
+
+Withdraws collateral from a credit account.
+
+<ParamField path="creditAccount" type="address" required>
+  Credit account to withdraw from
+</ParamField>
+
+<ParamField path="token" type="address" required>
+  Token to withdraw
+</ParamField>
+
+<ParamField path="amount" type="uint256" required>
+  Amount to withdraw
+</ParamField>
+
+<ParamField path="to" type="address" required>
+  Address to transfer token to
+</ParamField>
+
+### Collateral Checks
+
+#### fullCollateralCheck
+
+```solidity
+function fullCollateralCheck(
+    address creditAccount,
+    uint256 enabledTokensMask,
+    uint256[] calldata collateralHints,
+    uint16 minHealthFactor,
+    bool useSafePrices
+) external returns (uint256)
+```
+
+Performs a full check of the credit account's collateral to ensure it is sufficiently collateralized.
+
+<ParamField path="creditAccount" type="address" required>
+  Credit account to check
+</ParamField>
+
+<ParamField path="enabledTokensMask" type="uint256" required>
+  Bitmask of account's enabled collateral tokens
+</ParamField>
+
+<ParamField path="collateralHints" type="uint256[]" required>
+  Optional array of token masks to check first (for gas optimization)
+</ParamField>
+
+<ParamField path="minHealthFactor" type="uint16" required>
+  Health factor threshold in bps (10000 = 100%)
+</ParamField>
+
+<ParamField path="useSafePrices" type="bool" required>
+  Whether to use safe prices when evaluating collateral
+</ParamField>
+
+<Warning>
+Reverts with `NotEnoughCollateralException` if `twvUSD < minHealthFactor * totalDebtUSD`
+</Warning>
+
+#### calcDebtAndCollateral
+
+```solidity
+function calcDebtAndCollateral(
+    address creditAccount,
+    CollateralCalcTask task
+) external view returns (CollateralDebtData memory cdd)
+```
+
+Returns credit account's debt and collateral data.
+
+<ParamField path="creditAccount" type="address" required>
+  Credit account to return data for
+</ParamField>
+
+<ParamField path="task" type="CollateralCalcTask" required>
+  Calculation mode controlling level of detail:
+  - `GENERIC_PARAMS`: Basic debt and indexes
+  - `DEBT_ONLY`: Detailed debt info with accrued interest
+  - `DEBT_COLLATERAL`: Full debt and collateral values
+  - `DEBT_COLLATERAL_SAFE_PRICES`: Same as above with safe prices
+</ParamField>
+
+#### isLiquidatable
+
+```solidity
+function isLiquidatable(
+    address creditAccount,
+    uint16 minHealthFactor
+) external view returns (bool)
+```
+
+Checks whether a credit account's health factor is below the threshold.
+
+<ParamField path="creditAccount" type="address" required>
+  Credit account to check
+</ParamField>
+
+<ParamField path="minHealthFactor" type="uint16" required>
+  Health factor threshold in bps
+</ParamField>
+
+### Adapter Functions
+
+#### execute
+
+```solidity
+function execute(bytes calldata data)
+    external
+    returns (bytes memory result)
+```
+
+Instructs the active credit account to call the adapter's target contract.
+
+<ParamField path="data" type="bytes" required>
+  Data to call the target contract with
+</ParamField>
+
+<Note>
+Only callable by registered adapters. Reverts if active credit account is not set.
+</Note>
+
+#### approveCreditAccount
+
+```solidity
+function approveCreditAccount(address token, uint256 amount) external
+```
+
+Approves tokens from the active credit account to the adapter's target contract.
+
+<ParamField path="token" type="address" required>
+  Token to approve
+</ParamField>
+
+<ParamField path="amount" type="uint256" required>
+  Amount to approve
+</ParamField>
+
+#### setActiveCreditAccount
+
+```solidity
+function setActiveCreditAccount(address creditAccount) external
+```
+
+Sets or unsets the active credit account that adapters can interact with.
+
+<ParamField path="creditAccount" type="address" required>
+  Credit account to set as active, or `INACTIVE_CREDIT_ACCOUNT_ADDRESS` to unset
+</ParamField>
+
+<Note>
+Only callable by the credit facade.
+</Note>
+
+### Quota Management
+
+#### updateQuota
+
+```solidity
+function updateQuota(
+    address creditAccount,
+    address token,
+    int96 quotaChange,
+    uint96 minQuota,
+    uint96 maxQuota
+) external returns (uint256 tokensToEnable, uint256 tokensToDisable)
+```
+
+Requests the quota keeper to update a credit account's quota for a token.
+
+<ParamField path="creditAccount" type="address" required>
+  Account to update quota for
+</ParamField>
+
+<ParamField path="token" type="address" required>
+  Token to update quota for
+</ParamField>
+
+<ParamField path="quotaChange" type="int96" required>
+  Requested quota change (positive to increase, negative to decrease)
+</ParamField>
+
+<ParamField path="minQuota" type="uint96" required>
+  Minimum resulting quota required not to revert (slippage protection)
+</ParamField>
+
+<ParamField path="maxQuota" type="uint96" required>
+  Maximum resulting quota required not to revert
+</ParamField>
+
+<Warning>
+Accounts with zero debt are not allowed to increase quotas.
+</Warning>
+
+## View Functions
+
+### Token Information
+
+#### getTokenMaskOrRevert
+
+```solidity
+function getTokenMaskOrRevert(address token)
+    external view returns (uint256 tokenMask)
+```
+
+Returns the token's collateral mask in the credit manager.
+
+#### getTokenByMask
+
+```solidity
+function getTokenByMask(uint256 tokenMask)
+    external view returns (address token)
+```
+
+Returns the collateral token's address by its mask.
+
+#### liquidationThresholds
+
+```solidity
+function liquidationThresholds(address token)
+    external view returns (uint16 lt)
+```
+
+Returns the collateral token's liquidation threshold in basis points.
+
+#### collateralTokenByMask
+
+```solidity
+function collateralTokenByMask(uint256 tokenMask)
+    external view
+    returns (address token, uint16 liquidationThreshold)
+```
+
+Returns both the token address and liquidation threshold by mask.
+
+### Account Information
+
+#### creditAccountInfo
+
+```solidity
+function creditAccountInfo(address creditAccount)
+    external view
+    returns (
+        uint256 debt,
+        uint256 cumulativeIndexLastUpdate,
+        uint128 cumulativeQuotaInterest,
+        uint128 quotaFees,
+        uint256 enabledTokensMask,
+        uint16 flags,
+        uint64 lastDebtUpdate,
+        address borrower
+    )
+```
+
+Returns complete information about a credit account.
+
+#### getBorrowerOrRevert
+
+```solidity
+function getBorrowerOrRevert(address creditAccount)
+    external view returns (address borrower)
+```
+
+Returns the credit account's owner or reverts if the account doesn't exist.
+
+#### enabledTokensMaskOf
+
+```solidity
+function enabledTokensMaskOf(address creditAccount)
+    external view returns (uint256)
+```
+
+Returns the bitmask of enabled tokens for a credit account.
+
+#### creditAccounts
+
+```solidity
+function creditAccounts() external view returns (address[] memory)
+```
+
+Returns an array of all credit accounts opened in this credit manager.
+
+#### creditAccountsLen
+
+```solidity
+function creditAccountsLen() external view returns (uint256)
+```
+
+Returns the number of open credit accounts.
+
+### Configuration
+
+#### fees
+
+```solidity
+function fees()
+    external view
+    returns (
+        uint16 feeInterest,
+        uint16 feeLiquidation,
+        uint16 liquidationDiscount,
+        uint16 feeLiquidationExpired,
+        uint16 liquidationDiscountExpired
+    )
+```
+
+Returns the credit manager's fee parameters (all in basis points).
+
+## Data Structures
+
+### CreditAccountInfo
+
+```solidity
+struct CreditAccountInfo {
+    uint256 debt;                      // Debt principal
+    uint256 cumulativeIndexLastUpdate; // Last cumulative index
+    uint128 cumulativeQuotaInterest;   // Cumulative quota interest
+    uint128 quotaFees;                 // Quota fees
+    uint256 enabledTokensMask;         // Enabled tokens bitmask
+    uint16 flags;                      // Account flags
+    uint64 lastDebtUpdate;             // Last debt update block
+    address borrower;                  // Account owner
+}
+```
+
+### CollateralDebtData
+
+```solidity
+struct CollateralDebtData {
+    uint256 debt;                   // Debt principal
+    uint256 cumulativeIndexNow;     // Current cumulative index
+    uint256 cumulativeIndexLastUpdate; // Last cumulative index
+    uint128 cumulativeQuotaInterest;   // Cumulative quota interest
+    uint256 accruedInterest;        // Accrued interest
+    uint256 accruedFees;            // Accrued fees
+    uint256 totalDebtUSD;           // Total debt in USD
+    uint256 totalValue;             // Total collateral value
+    uint256 totalValueUSD;          // Total collateral value in USD
+    uint256 twvUSD;                 // Threshold-weighted value in USD
+    uint256 enabledTokensMask;      // Enabled tokens bitmask
+    uint256 quotedTokensMask;       // Quoted tokens bitmask
+    address[] quotedTokens;         // Array of quoted tokens
+    address _poolQuotaKeeper;       // Quota keeper address
+}
+```
+
+### CollateralTokenData
+
+```solidity
+struct CollateralTokenData {
+    address token;              // Token address
+    uint16 ltInitial;          // Initial liquidation threshold
+    uint16 ltFinal;            // Final liquidation threshold
+    uint40 timestampRampStart; // Ramp start timestamp
+    uint24 rampDuration;       // Ramp duration in seconds
+}
+```
+
+## Events
+
+### SetCreditConfigurator
+
+```solidity
+event SetCreditConfigurator(address indexed newConfigurator)
+```
+
+Emitted when a new credit configurator is set.
+
+## Access Control
+
+<Warning>
+Most functions are restricted to either the credit facade or credit configurator. Direct user access is not permitted.
+</Warning>
+
+- **Credit Facade Only**: Account management, collateral operations, quota updates
+- **Credit Configurator Only**: Configuration changes, token management, fee updates
+- **Adapters Only**: `execute()` and `approveCreditAccount()` functions
+
+## Example Usage
+
+### Opening an Account
+
+```solidity
+// Called by Credit Facade
+address creditAccount = creditManager.openCreditAccount(userAddress);
+```
+
+### Checking Health Factor
+
+```solidity
+bool liquidatable = creditManager.isLiquidatable(
+    creditAccount,
+    10000 // 100% health factor threshold
+);
+```
+
+### Getting Account Information
+
+```solidity
+CollateralDebtData memory data = creditManager.calcDebtAndCollateral(
+    creditAccount,
+    CollateralCalcTask.DEBT_COLLATERAL
+);
+
+uint256 healthFactor = (data.twvUSD * 10000) / data.totalDebtUSD;
+```

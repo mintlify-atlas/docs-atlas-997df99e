@@ -1,0 +1,685 @@
+---
+title: Quotas
+description: Understanding the quota system for non-underlying collateral tokens in Gearbox Protocol V3
+---
+
+The quota system is a key innovation in Gearbox V3 that allows credit accounts to use non-underlying tokens as collateral. Each non-underlying collateral token requires a quota allocation, which serves as a limit on how much collateral value can be contributed toward debt coverage.
+
+## Why Quotas?
+
+Quotas solve several problems in a composable leverage protocol:
+
+1. **Risk Management**: Limit exposure to volatile or less liquid collateral tokens
+2. **Interest Differentiation**: Charge different rates for different collateral types
+3. **Protocol Revenue**: Generate income from collateral diversity
+4. **Market Incentives**: Use dynamic rates to balance collateral demand
+
+<Info>
+The underlying token never requires a quota—it's always fully enabled as collateral. Quotas only apply to non-underlying tokens.
+</Info>
+
+## Quota Architecture
+
+### Pool Quota Keeper
+
+The Pool Quota Keeper manages all quota-related operations:
+
+```solidity
+interface IPoolQuotaKeeperV3 {
+    function updateQuota(
+        address creditAccount,
+        address token,
+        int96 requestedChange,
+        uint96 minQuota,
+        uint96 maxQuota
+    ) external returns (
+        uint128 caQuotaInterestChange,
+        uint128 fees,
+        bool enableToken,
+        bool disableToken
+    );
+    
+    function getQuota(address creditAccount, address token)
+        external view returns (uint96 quota, uint192 cumulativeIndexLU);
+    
+    function getTokenQuotaParams(address token)
+        external view returns (
+            uint16 rate,
+            uint192 cumulativeIndexLU,
+            uint16 quotaIncreaseFee,
+            uint96 totalQuoted,
+            uint96 limit,
+            bool isActive
+        );
+}
+```
+
+### Token Quota Parameters
+
+Each quoted token has global parameters:
+
+```solidity
+struct TokenQuotaParams {
+    uint16 rate;                  // Annual interest rate in bps
+    uint192 cumulativeIndexLU;    // Cumulative index at last update
+    uint16 quotaIncreaseFee;      // One-time fee for increasing quota (bps)
+    uint96 totalQuoted;           // Total quota allocated across all accounts
+    uint96 limit;                 // Maximum total quota allowed
+}
+```
+
+**Field Details:**
+
+- `rate`: Interest rate charged per year (e.g., 500 = 5%)
+- `cumulativeIndexLU`: Additive index for calculating interest
+- `quotaIncreaseFee`: One-time fee charged when quota increases (e.g., 1 = 0.01%)
+- `totalQuoted`: Sum of all quotas across all credit accounts for this token
+- `limit`: Maximum allowed `totalQuoted` (protocol risk limit)
+
+### Account Quota State
+
+Each credit account tracks its quota per token:
+
+```solidity
+struct AccountQuota {
+    uint96 quota;                 // Account's quota amount in underlying tokens
+    uint192 cumulativeIndexLU;    // Index at account's last update
+}
+```
+
+**Quota Amount:**
+- Denominated in underlying tokens (e.g., USDC for USDC pool)
+- Represents maximum collateral value from this token
+- Acts as a cap on the token's contribution to TWV
+
+**Cumulative Index:**
+- Tracks last update time for interest calculation
+- Uses additive (non-compounding) index
+- Updated whenever quota changes or interest is accrued
+
+## Quota Interest Mechanics
+
+### Additive Index Model
+
+Unlike base interest (which compounds), quota interest uses an additive model:
+
+```solidity
+function cumulativeIndexSince(
+    uint192 cumulativeIndexLU,
+    uint16 rate,
+    uint256 lastQuotaRateUpdate
+) internal view returns (uint192) {
+    return uint192(
+        uint256(cumulativeIndexLU) +
+        RAY_DIVIDED_BY_PERCENTAGE * 
+        (block.timestamp - lastQuotaRateUpdate) * 
+        rate / SECONDS_PER_YEAR
+    );
+}
+```
+
+**Why additive?**
+- Simpler calculations
+- More predictable costs
+- Lower gas consumption
+- Easier to reason about
+
+**Example:**
+```solidity
+// Token has 5% quota rate
+// Account has 1000 USDC quota
+
+rate = 500;  // 5% in bps
+quota = 1000;
+initialIndex = 0;
+
+// After 1 year
+indexGrowth = RAY * 0.05 = 5e25
+newIndex = 0 + 5e25 = 5e25
+
+// Interest calculation
+quotaInterest = quota * (newIndex - initialIndex) / RAY
+              = 1000 * 5e25 / 1e27
+              = 50 USDC
+```
+
+### Calculating Accrued Interest
+
+```solidity
+function calcAccruedQuotaInterest(
+    uint96 quoted,
+    uint192 cumulativeIndexNow,
+    uint192 cumulativeIndexLU
+) internal pure returns (uint128) {
+    return uint128(
+        uint256(quoted) * (cumulativeIndexNow - cumulativeIndexLU) / RAY
+    );
+}
+```
+
+Interest calculation is simple linear growth:
+
+```
+interest = quota × (currentIndex - lastIndex) / RAY
+```
+
+No compounding means:
+- Interest doesn't accrue on interest
+- Growth is perfectly linear
+- Easy to calculate for any time period
+
+## Updating Quotas
+
+### Update Quota Operation
+
+Users update quotas through the credit facade:
+
+```solidity
+function updateQuota(
+    address token,
+    int96 quotaChange,
+    uint96 minQuota
+) external;
+```
+
+**Parameters:**
+- `token`: The collateral token to update quota for
+- `quotaChange`: Amount to increase (positive) or decrease (negative) quota
+- `minQuota`: Minimum acceptable resulting quota (slippage protection)
+
+**Special Values:**
+- `quotaChange = type(int96).min`: Disable quota completely (reduce to 0)
+- `quotaChange > 0`: Increase quota, enable token if necessary
+- `quotaChange < 0`: Decrease quota, disable token if reaching 0
+
+### Update Flow
+
+The quota update process involves multiple steps:
+
+```solidity
+function updateQuota(
+    address creditAccount,
+    address token,
+    int96 quotaChange,
+    uint96 minQuota,
+    uint96 maxQuota
+) external returns (
+    uint256 tokensToEnable,
+    uint256 tokensToDisable
+) {
+    // 1. Get current quota and accrue interest
+    (uint96 currentQuota, uint192 accountIndexLU) = 
+        getQuota(creditAccount, token);
+    
+    // 2. Update token's cumulative index
+    uint192 tokenIndexNow = cumulativeIndex(token);
+    
+    // 3. Calculate accrued interest
+    uint128 quotaInterestChange = calcAccruedQuotaInterest(
+        currentQuota,
+        tokenIndexNow,
+        accountIndexLU
+    );
+    
+    // 4. Calculate quota change (respecting limits)
+    int96 actualChange = calcActualQuotaChange(
+        tokenTotalQuoted,
+        tokenLimit,
+        quotaChange
+    );
+    
+    // 5. Calculate one-time fee
+    uint128 fees = 0;
+    if (actualChange > 0) {
+        fees = uint128(
+            uint256(uint96(actualChange)) * quotaIncreaseFee / PERCENTAGE_FACTOR
+        );
+    }
+    
+    // 6. Update account quota
+    uint96 newQuota = currentQuota + actualChange;
+    require(newQuota >= minQuota && newQuota <= maxQuota);
+    
+    accountQuotas[creditAccount][token] = AccountQuota({
+        quota: newQuota,
+        cumulativeIndexLU: tokenIndexNow
+    });
+    
+    // 7. Update token total
+    tokenQuotas[token].totalQuoted += actualChange;
+    
+    // 8. Update pool quota revenue
+    int256 revenueChange = calcQuotaRevenueChange(rate, actualChange);
+    pool.updateQuotaRevenue(revenueChange);
+    
+    // 9. Determine token enable/disable
+    bool enableToken = (currentQuota == 0 && newQuota > 0);
+    bool disableToken = (newQuota == 0 && currentQuota > 0);
+    
+    return (quotaInterestChange, fees, enableToken, disableToken);
+}
+```
+
+<Accordion title="Detailed Step Breakdown">
+  **1. Get Current State**
+  - Retrieve account's current quota and last update index
+  - If no quota exists, initialize to zero
+
+  **2. Update Token Index**
+  - Calculate current cumulative index for the token
+  - Accounts for time elapsed and current rate
+
+  **3. Accrue Interest**
+  - Calculate interest accrued since last update
+  - Add to account's cumulative quota interest
+
+  **4. Calculate Actual Change**
+  - Requested change may be limited by token quota limit
+  - Ensures `totalQuoted` doesn't exceed `limit`
+
+  **5. Calculate One-Time Fee**
+  - Only charged on quota increases
+  - Added to account's `quotaFees`
+
+  **6. Update Account Quota**
+  - Apply the quota change
+  - Store new quota and current index
+  - Validate against min/max bounds
+
+  **7. Update Token Total**
+  - Increment or decrement `totalQuoted`
+  - Enforces protocol-wide token exposure limit
+
+  **8. Update Pool Revenue**
+  - Calculate change in annual quota revenue
+  - Notify pool to update expected liquidity
+
+  **9. Token Enable/Disable**
+  - Enable token when quota goes 0 → positive
+  - Disable token when quota goes positive → 0
+  - Update account's `enabledTokensMask`
+</Accordion>
+
+### Quota Limits
+
+Multiple limits constrain quota updates:
+
+```solidity
+function calcActualQuotaChange(
+    uint96 totalQuoted,
+    uint96 limit,
+    int96 requestedChange
+) internal pure returns (int96 quotaChange) {
+    // If already at limit, no increase allowed
+    if (totalQuoted >= limit) {
+        return 0;
+    }
+    
+    // Calculate remaining capacity
+    uint96 maxQuotaCapacity = limit - totalQuoted;
+    
+    // Cap increase at available capacity
+    return uint96(requestedChange) > maxQuotaCapacity 
+        ? int96(maxQuotaCapacity) 
+        : requestedChange;
+}
+```
+
+**Limit Types:**
+
+1. **Token Limit** (`TokenQuotaParams.limit`)
+   - Total quota across all accounts for a token
+   - Protocol-wide risk management
+   - Set by governance based on token liquidity and volatility
+
+2. **Account Limit** (via facade `maxQuotaMultiplier`)
+   - Per-account quota limit
+   - Typically: `maxQuota = debt * maxQuotaMultiplier`
+   - Prevents excessive collateral concentration
+
+3. **User-Specified Bounds** (`minQuota`, `maxQuota` parameters)
+   - Slippage protection
+   - Ensures quota update meets expectations
+   - Prevents front-running quota limit changes
+
+<Warning>
+When a token's total quota reaches its limit, subsequent increase requests will be capped or rejected. Monitor token quota utilization before operations.
+</Warning>
+
+## Quota Revenue
+
+### Revenue Calculation
+
+Quota revenue represents the annual income from all quotas:
+
+```solidity
+function calcQuotaRevenueChange(uint16 rate, int256 change) 
+    internal pure returns (int256) {
+    return change * int256(uint256(rate)) / int16(PERCENTAGE_FACTOR);
+}
+```
+
+**Example:**
+```solidity
+// WETH quota increases by 10,000 USDC
+// WETH quota rate is 3% (300 bps)
+
+quotaChange = 10000;
+rate = 300;
+
+revenueChange = 10000 * 300 / 10000 = 300 USDC/year
+```
+
+### Pool Revenue Updates
+
+The pool tracks total quota revenue:
+
+```solidity
+function updateQuotaRevenue(int256 quotaRevenueDelta) external {
+    require(msg.sender == poolQuotaKeeper);
+    
+    // Accrue revenue since last update
+    uint256 elapsed = block.timestamp - lastQuotaRevenueUpdate;
+    uint256 accruedRevenue = _quotaRevenue * elapsed / SECONDS_PER_YEAR;
+    _expectedLiquidityLU += accruedRevenue;
+    
+    // Apply revenue change
+    if (quotaRevenueDelta >= 0) {
+        _quotaRevenue += uint96(uint256(quotaRevenueDelta));
+    } else {
+        _quotaRevenue -= uint96(uint256(-quotaRevenueDelta));
+    }
+    
+    lastQuotaRevenueUpdate = uint40(block.timestamp);
+}
+```
+
+**Revenue Flow:**
+
+1. Quota interest accrues to credit accounts (increases debt)
+2. When repaid, goes to the pool (increases expected liquidity)
+3. Distributed to LPs through share price increase
+4. Protocol takes fee on quota interest (via `feeInterest`)
+
+<Info>
+Quota revenue provides yield to LPs even when pool utilization is low, incentivizing deposits during low-demand periods.
+</Info>
+
+## Quota Interest vs Base Interest
+
+| Aspect | Base Interest | Quota Interest |
+|--------|--------------|----------------|
+| Applied to | Debt principal | Quota amounts |
+| Calculation | Compounding (exponential) | Additive (linear) |
+| Index type | Multiplicative | Additive |
+| Rate source | Interest rate model | Per-token governance |
+| Rate updates | Every interaction | Gauge votes (periodic) |
+| Repayment priority | After quota interest | Before base interest |
+| Protocol fee | Yes (`feeInterest`) | Yes (`feeInterest`) |
+
+**Combined Example:**
+```solidity
+// Account state:
+debt = 10000 USDC;
+wethQuota = 5000 USDC;
+
+// Rates:
+baseRate = 10% APY (compounding);
+wethQuotaRate = 3% APY (linear);
+feeInterest = 10%;
+
+// After 1 year:
+baseInterest = 10000 * (1.10 - 1) = 1000 USDC;
+quotaInterest = 5000 * 0.03 = 150 USDC;
+
+totalInterest = 1150 USDC;
+protocolFee = 1150 * 0.10 = 115 USDC;
+
+totalOwed = 10000 + 1150 + 115 = 11265 USDC;
+```
+
+## Quota Management Strategies
+
+### When to Use Quotas
+
+<AccordionGroup>
+  <Accordion title="Farming with LP Tokens">
+    Use quotas when you want to keep yield-bearing assets as collateral:
+
+    ```solidity
+    // Borrow USDC against Curve LP tokens
+    // 1. Open account with USDC debt
+    // 2. Swap USDC to tokens
+    // 3. Provide liquidity to Curve
+    // 4. Update quota for LP token
+    // 5. LP token now counts as collateral
+    ```
+
+    Benefits:
+    - Keep earning LP fees while borrowing
+    - Use leverage to amplify LP returns
+    - Maintain exposure to underlying assets
+
+    Costs:
+    - Quota interest rate
+    - One-time quota increase fee
+    - Lower LT than underlying
+  </Accordion>
+
+  <Accordion title="Holding Volatile Assets">
+    Maintain exposure to non-stablecoin collateral:
+
+    ```solidity
+    // Borrow USDC against ETH
+    // 1. Open account with USDC debt
+    // 2. Update quota for WETH
+    // 3. Acquire WETH (via swap or add collateral)
+    // 4. WETH counts as collateral up to quota
+    ```
+
+    Benefits:
+    - Keep upside exposure to ETH
+    - Don't need to sell ETH to borrow
+    - Can leverage multiple assets simultaneously
+
+    Costs:
+    - Higher quota interest for volatile assets
+    - Risk of liquidation from price drops
+    - Quota limits may constrain position size
+  </Accordion>
+
+  <Accordion title="Diversified Collateral">
+    Spread risk across multiple collateral types:
+
+    ```solidity
+    // Collateral basket:
+    // - 40% USDC (no quota needed)
+    // - 30% WETH (quota)
+    // - 30% stETH (quota)
+    ```
+
+    Benefits:
+    - Reduced concentration risk
+    - Protection if one asset depegs
+    - Optimized LT usage
+
+    Costs:
+    - Multiple quota interest charges
+    - More complex management
+    - Higher gas costs
+  </Accordion>
+</AccordionGroup>
+
+### Quota Optimization
+
+**Right-sizing Quotas:**
+
+```solidity
+// Calculate optimal quota
+optimalQuota = tokenBalance * tokenPrice * tokenLT / underlyingPrice
+
+// Example:
+wethBalance = 5 ETH
+wethPrice = $2000
+wethLT = 85%
+usdcPrice = $1
+
+optimalQuota = 5 * 2000 * 0.85 / 1 = 8500 USDC
+```
+
+Setting quota too low:
+- Wastes collateral (balance exceeds quota)
+- Reduces effective health factor
+
+Setting quota too high:
+- Pays interest on unused quota
+- May hit account quota limits
+
+<Tip>
+Monitor your token balances and quota utilization. If balance value falls below quota, consider reducing quota to save on interest costs.
+</Tip>
+
+### Disabling Quotas
+
+Before closing an account, all quotas must be disabled:
+
+```solidity
+// Disable all quotas
+for (address token : quotedTokens) {
+    updateQuota(token, type(int96).min, 0);  // Set to 0
+}
+
+// Then close account
+closeCreditAccount(account, calls);
+```
+
+**Disabling Process:**
+1. Accrue final quota interest
+2. Update account's cumulative quota interest
+3. Set quota to 0
+4. Remove token from enabled mask
+5. Update pool quota revenue (decrease)
+
+## Rate Management
+
+### Setting Quota Rates
+
+Governance sets quota rates through the gauge system:
+
+```solidity
+function updateRates() external {
+    // Called by gauge after voting period
+    // Updates all token quota rates based on vote results
+}
+```
+
+**Rate Considerations:**
+- Token volatility (higher for volatile assets)
+- Market liquidity (higher for illiquid assets)
+- Protocol exposure (higher when near limit)
+- Competitive rates (compare to alternatives)
+- Revenue targets (balance growth and usage)
+
+### Quota Increase Fees
+
+One-time fees discourage quota churning:
+
+```solidity
+uint16 quotaIncreaseFee;  // In basis points
+
+// Example: 1 bps = 0.01%
+// Increasing quota by 10,000 USDC:
+fee = 10000 * 1 / 10000 = 1 USDC
+```
+
+Fees are:
+- Only charged on increases (not decreases)
+- Proportional to increase amount
+- Added to account's `quotaFees`
+- Repaid before all other debt components
+- Go to protocol treasury
+
+## Monitoring Quotas
+
+### View Functions
+
+```solidity
+// Get account's quota for a token
+function getQuota(address creditAccount, address token)
+    external view returns (
+        uint96 quota,
+        uint192 cumulativeIndexLU
+    );
+
+// Get token's parameters and utilization
+function getTokenQuotaParams(address token)
+    external view returns (
+        uint16 rate,
+        uint192 cumulativeIndexLU,
+        uint16 quotaIncreaseFee,
+        uint96 totalQuoted,
+        uint96 limit,
+        bool isActive
+    );
+
+// Calculate outstanding quota interest
+function getQuotaAndOutstandingInterest(
+    address creditAccount,
+    address token
+) external view returns (
+    uint96 quoted,
+    uint128 outstandingInterest
+);
+```
+
+### Quota Utilization
+
+```solidity
+// Check token quota availability
+(,,,uint96 totalQuoted, uint96 limit,) = getTokenQuotaParams(token);
+
+quotaUtilization = totalQuoted * 100 / limit;
+availableQuota = limit - totalQuoted;
+```
+
+**Utilization Levels:**
+- `< 50%`: Low utilization, likely available capacity
+- `50-80%`: Moderate utilization, monitor for increases
+- `80-95%`: High utilization, increases may be limited
+- `> 95%`: Near limit, new quotas likely unavailable
+
+<Warning>
+When a token approaches its quota limit, governance may increase the limit or raise the interest rate. Monitor token quota utilization to anticipate changes.
+</Warning>
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Cost Management" icon="sack-dollar">
+    - Only enable quotas for tokens you need as collateral
+    - Right-size quotas to actual collateral value
+    - Disable unused quotas to stop interest accrual
+    - Compare quota rates across similar tokens
+  </Card>
+  
+  <Card title="Risk Management" icon="chart-line">
+    - Monitor token quota limits and utilization
+    - Understand each token's liquidation threshold
+    - Account for quota interest in debt calculations
+    - Keep quota below account debt limits
+  </Card>
+  
+  <Card title="Gas Optimization" icon="gas-pump">
+    - Batch quota updates with other operations
+    - Use multicall to update multiple quotas atomically
+    - Consider gas costs vs. interest savings
+    - Disable quotas before account closure
+  </Card>
+  
+  <Card title="Health Maintenance" icon="heart-pulse">
+    - Ensure quota covers your token balance value
+    - Adjust quotas when rebalancing collateral
+    - Account for one-time fees in health calculations
+    - Monitor effective LT with quota caps
+  </Card>
+</CardGroup>

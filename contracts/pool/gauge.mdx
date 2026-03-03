@@ -1,0 +1,551 @@
+---
+title: Gauge V3
+description: GEAR holder voting system for determining quota interest rates on risky assets
+---
+
+## Overview
+
+GaugeV3 implements a voting mechanism where GEAR token holders determine quota interest rates for risky assets. Inspired by Curve's gauge system, it allows token holders to vote between minimum rates (set by risk committee) and maximum rates (set by DAO):
+
+- **CA side votes**: Push rates toward minimum (favors credit account users)
+- **LP side votes**: Push rates toward maximum (favors liquidity providers)
+
+Rates update once per epoch (1 week) to prevent manipulation and ensure predictability.
+
+**Contract Location:** `contracts/pool/GaugeV3.sol`
+
+## Key Features
+
+- **Dual-Side Voting**: Vote for CA side or LP side to influence rates
+- **Rate Ranges**: Each token has min/max bounds set by governance
+- **Epoch-Based Updates**: Rates update weekly, not on every vote
+- **GEAR Staking Integration**: Voting power comes from staked GEAR
+- **Freezable**: Can pause rate updates during migrations
+- **Multi-Token**: Manages rates for all quoted tokens in the pool
+
+## Architecture
+
+```solidity
+contract GaugeV3 is IGaugeV3, ACLTrait, SanityCheckTrait
+```
+
+## State Variables
+
+### Immutable
+
+<ParamField path="version" type="uint256">
+  Contract version: `3_10`
+</ParamField>
+
+<ParamField path="contractType" type="bytes32">
+  Contract type: `"RATE_KEEPER::GAUGE"`
+</ParamField>
+
+<ParamField path="pool" type="address">
+  Address of the lending pool this gauge controls
+</ParamField>
+
+<ParamField path="voter" type="address">
+  GEAR staking contract that tracks voting power
+</ParamField>
+
+### State
+
+<ParamField path="epochLastUpdate" type="uint16">
+  Epoch number when rates were last updated
+</ParamField>
+
+<ParamField path="epochFrozen" type="bool">
+  Whether rate updates are frozen (starts as true)
+</ParamField>
+
+## Data Structures
+
+### QuotaRateParams
+
+```solidity
+struct QuotaRateParams {
+    uint16 minRate;           // Minimum rate (set by risk committee)
+    uint16 maxRate;           // Maximum rate (set by DAO)
+    uint96 totalVotesLpSide;  // Total votes for LP side
+    uint96 totalVotesCaSide;  // Total votes for CA side
+}
+```
+
+### UserVotes
+
+```solidity
+struct UserVotes {
+    uint96 votesLpSide;  // User's votes on LP side
+    uint96 votesCaSide;  // User's votes on CA side
+}
+```
+
+## Core Functions
+
+### Voting
+
+#### vote
+
+```solidity
+function vote(
+    address user,
+    uint96 votes,
+    bytes calldata extraData
+) external
+```
+
+Submits votes for a token and side. Only callable by voter contract.
+
+<ParamField path="user" type="address">
+  User submitting the votes
+</ParamField>
+
+<ParamField path="votes" type="uint96">
+  Amount of voting power to add
+</ParamField>
+
+<ParamField path="extraData" type="bytes">
+  ABI-encoded `(address token, bool lpSide)`
+  - `token`: Token to vote for
+  - `lpSide`: true for LP side, false for CA side
+</ParamField>
+
+**Side Effects:**
+- Updates epoch if needed
+- Increases total votes for the chosen side
+- Increases user's votes for the chosen side
+
+```solidity
+// Vote 1000 votes for WETH on LP side
+bytes memory extraData = abi.encode(WETH, true);
+voter.vote(user, 1000, extraData);
+```
+
+#### unvote
+
+```solidity
+function unvote(
+    address user,
+    uint96 votes,
+    bytes calldata extraData
+) external
+```
+
+Removes votes for a token and side. Only callable by voter contract.
+
+<ParamField path="votes" type="uint96">
+  Amount of voting power to remove
+</ParamField>
+
+**Requirements:**
+- User must have sufficient votes on that side
+
+```solidity
+// Remove 500 votes from WBTC on CA side
+bytes memory extraData = abi.encode(WBTC, false);
+voter.unvote(user, 500, extraData);
+```
+
+### Epoch Management
+
+#### updateEpoch
+
+```solidity
+function updateEpoch() external
+```
+
+Checks and updates the current epoch. If epoch changed and gauge is not frozen, triggers rate update in quota keeper.
+
+**Process:**
+1. Queries current epoch from GEAR staking
+2. If epoch advanced:
+   - Updates `epochLastUpdate`
+   - If not frozen, calls `poolQuotaKeeper.updateRates()`
+   - Emits `UpdateEpoch` event
+
+```solidity
+// Anyone can call to update epoch
+gauge.updateEpoch();
+```
+
+### Rate Calculation
+
+#### getRates
+
+```solidity
+function getRates(address[] calldata tokens)
+    external
+    view
+    returns (uint16[] memory rates)
+```
+
+Computes current rates for tokens based on votes. Called by pool quota keeper during rate updates.
+
+<ParamField path="tokens" type="address[]">
+  Tokens to compute rates for
+</ParamField>
+
+**Returns:** Array of rates in basis points
+
+**Formula:**
+
+If no votes: rate = `minRate`
+
+Otherwise:
+```
+rate = (minRate * votesCaSide + maxRate * votesLpSide) / totalVotes
+```
+
+**Examples:**
+
+Token with `minRate = 100` (1%), `maxRate = 1000` (10%):
+
+| LP Votes | CA Votes | Resulting Rate |
+|----------|----------|----------------|
+| 0 | 0 | 1% (default to min) |
+| 1000 | 0 | 10% (all LP votes) |
+| 0 | 1000 | 1% (all CA votes) |
+| 500 | 500 | 5.5% (balanced) |
+| 750 | 250 | 7.75% (3:1 LP favor) |
+| 100 | 900 | 1.9% (9:1 CA favor) |
+
+```solidity
+// Get current rates (may differ from active rates until next epoch)
+address[] memory tokens = new address[](2);
+tokens[0] = WETH;
+tokens[1] = WBTC;
+uint16[] memory rates = gauge.getRates(tokens);
+```
+
+### Configuration
+
+#### addQuotaToken
+
+```solidity
+function addQuotaToken(
+    address token,
+    uint16 minRate,
+    uint16 maxRate
+) external
+```
+
+Adds a new token with specified rate bounds. Only callable by configurator.
+
+<ParamField path="token" type="address">
+  Token address (cannot be pool's underlying)
+</ParamField>
+
+<ParamField path="minRate" type="uint16">
+  Minimum rate in basis points (must be > 0)
+</ParamField>
+
+<ParamField path="maxRate" type="uint16">
+  Maximum rate in basis points (must be ≥ minRate)
+</ParamField>
+
+**Side Effects:**
+- Adds token to gauge
+- Adds token to pool quota keeper if not already added
+- Sets initial rate bounds
+- Starts with 0 votes on both sides
+
+```solidity
+// Add WETH with 2% min, 15% max
+gauge.addQuotaToken(
+    WETH,
+    200,   // 2% minimum
+    1500   // 15% maximum
+);
+```
+
+#### addToken
+
+```solidity
+function addToken(address token) external
+```
+
+Adds token with default rate params (1 bps min and max). Only callable by configurator.
+
+<Note>
+After adding with default rates, use `changeQuotaMinRate` and `changeQuotaMaxRate` to set proper bounds.
+</Note>
+
+#### changeQuotaMinRate
+
+```solidity
+function changeQuotaMinRate(address token, uint16 minRate) external
+```
+
+Updates minimum rate for a token. Only callable by configurator.
+
+**Requirements:**
+- Token must already be added
+- `minRate` must be > 0 and ≤ `maxRate`
+
+```solidity
+// Increase WETH minimum rate to 3%
+gauge.changeQuotaMinRate(WETH, 300);
+```
+
+#### changeQuotaMaxRate
+
+```solidity
+function changeQuotaMaxRate(address token, uint16 maxRate) external
+```
+
+Updates maximum rate for a token. Only callable by configurator.
+
+**Requirements:**
+- Token must already be added  
+- `maxRate` must be ≥ `minRate`
+
+```solidity
+// Decrease WBTC maximum rate to 12%
+gauge.changeQuotaMaxRate(WBTC, 1200);
+```
+
+#### setFrozenEpoch
+
+```solidity
+function setFrozenEpoch(bool status) external
+```
+
+Sets whether the gauge is frozen. Only callable by configurator.
+
+<ParamField path="status" type="bool">
+  true to freeze (prevent rate updates), false to unfreeze
+</ParamField>
+
+**Use Case:** Freeze during gauge/staking contract migrations to prevent rate updates until the new system is ready.
+
+```solidity
+// Freeze gauge before migration
+gauge.setFrozenEpoch(true);
+
+// ... perform migration ...
+
+// Unfreeze after migration complete
+gauge.setFrozenEpoch(false);
+```
+
+### View Functions
+
+#### quotaRateParams
+
+```solidity
+function quotaRateParams(address token) external view returns (
+    uint16 minRate,
+    uint16 maxRate,
+    uint96 totalVotesLpSide,
+    uint96 totalVotesCaSide
+)
+```
+
+Returns rate parameters and vote totals for a token.
+
+```solidity
+// Check WETH rate params and votes
+(
+    uint16 minRate,
+    uint16 maxRate,
+    uint96 lpVotes,
+    uint96 caVotes
+) = gauge.quotaRateParams(WETH);
+
+console.log("Rate range:", minRate, "-", maxRate, "bps");
+console.log("LP votes:", lpVotes);
+console.log("CA votes:", caVotes);
+```
+
+#### userTokenVotes
+
+```solidity
+function userTokenVotes(address user, address token) external view returns (
+    uint96 votesLpSide,
+    uint96 votesCaSide  
+)
+```
+
+Returns a user's votes for a specific token.
+
+#### isTokenAdded
+
+```solidity
+function isTokenAdded(address token) external view returns (bool)
+```
+
+Checks if a token is added to the gauge (has `maxRate > 0`).
+
+## Events
+
+```solidity
+event UpdateEpoch(uint16 epochNow)
+event Vote(address indexed user, address indexed token, uint96 votes, bool lpSide)
+event Unvote(address indexed user, address indexed token, uint96 votes, bool lpSide)
+event AddQuotaToken(address indexed token, uint16 minRate, uint16 maxRate)
+event SetQuotaTokenParams(address indexed token, uint16 minRate, uint16 maxRate)
+event SetFrozenEpoch(bool status)
+```
+
+## Example Usage
+
+### Initial Setup
+
+```solidity
+// Deploy gauge
+GaugeV3 gauge = new GaugeV3(poolAddress, gearStakingAddress);
+
+// Add tokens with rate bounds
+gauge.addQuotaToken(
+    WETH,
+    200,   // 2% min (risk committee says min safe rate)
+    1500   // 15% max (DAO says max competitive rate)
+);
+
+gauge.addQuotaToken(
+    WBTC,
+    150,   // 1.5% min
+    1200   // 12% max
+);
+
+// Unfreeze to allow rate updates
+gauge.setFrozenEpoch(false);
+```
+
+### User Voting Flow
+
+```solidity
+// User stakes GEAR to get voting power
+gearStaking.stake(1000e18);
+
+// Vote 500 votes for WETH on LP side (wants higher rates for LPs)
+bytes memory wethLpVote = abi.encode(WETH, true);
+gearStaking.submitVote(gauge, 500, wethLpVote);
+
+// Vote 300 votes for WBTC on CA side (wants lower rates for borrowers)
+bytes memory wbtcCaVote = abi.encode(WBTC, false);
+gearStaking.submitVote(gauge, 300, wbtcCaVote);
+
+// Later, remove some votes
+gearStaking.removeVote(gauge, 200, wethLpVote);
+```
+
+### Rate Update Process
+
+```solidity
+// At the start of a new epoch (e.g., Monday 00:00 UTC):
+
+// 1. Anyone triggers epoch update
+gauge.updateEpoch();
+// This calls poolQuotaKeeper.updateRates() internally
+
+// 2. Quota keeper queries new rates from gauge
+address[] memory tokens = quotaKeeper.quotedTokens();
+uint16[] memory rates = gauge.getRates(tokens);
+// rates[0] = weighted average between minRate and maxRate based on votes
+
+// 3. Quota keeper updates cumulative indexes and sets new rates
+// These new rates will apply for the next week until next epoch update
+```
+
+### Monitoring Votes and Rates
+
+```solidity
+// Check current vote distribution for WETH
+(uint16 min, uint16 max, uint96 lpVotes, uint96 caVotes) = 
+    gauge.quotaRateParams(WETH);
+
+console.log("WETH rate range:", min, "-", max, "bps");
+console.log("LP side votes:", lpVotes);
+console.log("CA side votes:", caVotes);
+
+// Calculate effective rate
+uint256 totalVotes = lpVotes + caVotes;
+uint16 effectiveRate = totalVotes == 0 
+    ? min
+    : uint16((min * caVotes + max * lpVotes) / totalVotes);
+console.log("Effective rate:", effectiveRate, "bps");
+
+// Check user's individual votes
+(uint96 userLpVotes, uint96 userCaVotes) = 
+    gauge.userTokenVotes(userAddress, WETH);
+console.log("User's WETH votes - LP:", userLpVotes, "CA:", userCaVotes);
+```
+
+## Rate Calculation Examples
+
+### Example 1: WETH with 2% - 15% Range
+
+**Setup:**
+- `minRate = 200` (2%)
+- `maxRate = 1500` (15%)
+
+**Scenario A: Heavy LP Voting**
+- LP votes: 9000
+- CA votes: 1000
+- Total: 10000
+- Rate = (200 * 1000 + 1500 * 9000) / 10000 = 13.7%
+
+**Scenario B: Heavy CA Voting**  
+- LP votes: 1000
+- CA votes: 9000
+- Total: 10000
+- Rate = (200 * 9000 + 1500 * 1000) / 10000 = 3.3%
+
+**Scenario C: Balanced**
+- LP votes: 5000
+- CA votes: 5000
+- Total: 10000
+- Rate = (200 * 5000 + 1500 * 5000) / 10000 = 8.5%
+
+### Example 2: Impact of Changing Votes
+
+Current state:
+- LP votes: 6000
+- CA votes: 4000
+- Rate = (200 * 4000 + 1500 * 6000) / 10000 = 9.8%
+
+User adds 1000 votes to CA side:
+- LP votes: 6000
+- CA votes: 5000
+- Rate = (200 * 5000 + 1500 * 6000) / 11000 = 9.0%
+- Rate decreased by 0.8%
+
+## Governance Strategies
+
+### For Liquidity Providers
+
+- **Goal**: Maximize yield by pushing rates toward maximum
+- **Action**: Vote on LP side for all tokens
+- **Impact**: Higher quota interest rates → more revenue to pool → higher supply rates
+
+### For Credit Account Users
+
+- **Goal**: Minimize borrowing costs by pushing rates toward minimum
+- **Action**: Vote on CA side for tokens you frequently use
+- **Impact**: Lower quota interest rates → cheaper to hold leveraged positions
+
+### For Protocol Governors
+
+- **Adjust minimums**: Lower min rates to allow cheaper CA borrowing
+- **Adjust maximums**: Raise max rates to allow more LP yield in bull markets
+- **Token-specific tuning**: Set narrow ranges for stable assets, wide ranges for volatile assets
+
+## Security Considerations
+
+<Info>
+**Epoch-Based Updates**: Rates only update once per week, preventing manipulation from flash voting.
+</Info>
+
+<Info>
+**Bounded Rates**: All rates constrained between governance-set min/max bounds to prevent extreme values.
+</Info>
+
+<Info>
+**Freezable**: Gauge can be frozen during migrations to pause rate updates without affecting existing quotas.
+</Info>
+
+<Info>
+**Access Control**: Only the voter contract can submit votes, ensuring votes correspond to staked GEAR.
+</Info>

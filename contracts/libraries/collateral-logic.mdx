@@ -1,0 +1,233 @@
+---
+title: "CollateralLogic"
+description: "Library for calculating collateral value on credit accounts"
+---
+
+## Overview
+
+The `CollateralLogic` library computes the total value and threshold-weighted value (TWV) of collateral on credit accounts. It supports efficient collateral checks by allowing calculations to stop once a target TWV is reached.
+
+## Key Features
+
+- USD-denominated collateral valuation
+- Threshold-weighted value (TWV) calculation for liquidation checks
+- Quota-aware collateral calculation
+- Early termination when target TWV is reached
+- Efficient packing/unpacking of quota and liquidation threshold data
+
+## Core Functions
+
+### calcCollateral
+
+```solidity
+function calcCollateral(
+    address[] memory quotedTokens,
+    uint256[] memory quotasPacked,
+    address creditAccount,
+    address underlying,
+    uint16 ltUnderlying,
+    uint256 twvUSDTarget,
+    function (address, uint256, address) view returns(uint256) convertToUSDFn,
+    address priceOracle
+) internal view returns (
+    uint256 totalValueUSD,
+    uint256 twvUSD
+)
+```
+
+Computes USD-denominated total value and TWV of a credit account.
+
+**Parameters:**
+- `quotedTokens` - Array of quoted tokens on the credit account
+- `quotasPacked` - Array of packed (quota, LT) values, same order as tokens
+- `creditAccount` - Credit account address to compute collateral for
+- `underlying` - Underlying token of the credit manager
+- `ltUnderlying` - Liquidation threshold of the underlying token
+- `twvUSDTarget` - Target TWV to stop calculation (use `type(uint256).max` for full calculation)
+- `convertToUSDFn` - Function that converts token amounts to USD
+- `priceOracle` - Price oracle address for conversions
+
+**Returns:**
+- `totalValueUSD` - Total value of all account assets in USD
+- `twvUSD` - Total threshold-weighted value in USD
+
+<Info>
+If `twvUSDTarget` is specified and reached during calculation, the function stops early and returns partial values. This optimization is useful for efficiently checking if an account has sufficient collateral.
+</Info>
+
+### calcOneTokenCollateral
+
+```solidity
+function calcOneTokenCollateral(
+    address creditAccount,
+    function (address, uint256, address) view returns(uint256) convertToUSDFn,
+    address priceOracle,
+    address token,
+    uint16 liquidationThreshold,
+    uint256 quotaUSD
+) internal view returns (
+    uint256 valueUSD,
+    uint256 weightedValueUSD
+)
+```
+
+Computes USD value of a single asset on a credit account.
+
+**Parameters:**
+- `creditAccount` - Address of the credit account
+- `convertToUSDFn` - Function to convert token amounts to USD
+- `priceOracle` - Price oracle address
+- `token` - Token address to value
+- `liquidationThreshold` - LT of the token (in basis points)
+- `quotaUSD` - Quota limit for this token in USD
+
+**Returns:**
+- `valueUSD` - Full USD value of the token balance
+- `weightedValueUSD` - LT-weighted value, capped by quota: `min(valueUSD * LT / 10000, quotaUSD)`
+
+<Note>
+The weighted value is the minimum of the LT-weighted value and the quota. This ensures that tokens cannot contribute more to TWV than their allocated quota allows.
+</Note>
+
+## Packing Functions
+
+### packQuota
+
+```solidity
+function packQuota(
+    uint96 quota,
+    uint16 lt
+) internal pure returns (uint256)
+```
+
+Packs quota and liquidation threshold into a single uint256 word for gas-efficient storage.
+
+**Parameters:**
+- `quota` - Quota value (96 bits)
+- `lt` - Liquidation threshold (16 bits)
+
+**Returns:** Packed value with LT in upper 16 bits and quota in lower 96 bits
+
+### unpackQuota
+
+```solidity
+function unpackQuota(
+    uint256 packedQuota
+) internal pure returns (
+    uint256 quota,
+    uint16 lt
+)
+```
+
+Unpacks a uint256 word into quota and liquidation threshold.
+
+**Parameters:**
+- `packedQuota` - Packed value containing quota and LT
+
+**Returns:**
+- `quota` - Quota value (lower 96 bits)
+- `lt` - Liquidation threshold (upper 16 bits)
+
+<Info>
+Packing format:
+```
+|    16 bits    |      96 bits      |
+|      LT       |      Quota        |
+```
+This efficient packing reduces storage costs and gas usage.
+</Info>
+
+## How TWV Works
+
+Threshold-weighted value (TWV) is the effective collateral value used for liquidation checks:
+
+1. **Total Value**: Raw USD value of all tokens
+2. **Weighted Value**: `value * liquidationThreshold / PERCENTAGE_FACTOR`
+3. **Quota-Capped**: `min(weightedValue, quotaUSD)`
+4. **TWV**: Sum of all quota-capped weighted values
+
+An account is liquidatable when: `TWV < totalDebt`
+
+<Warning>
+The liquidation threshold (LT) determines what percentage of a token's value counts toward collateral. For example:
+- LT = 9000 (90%) means $100 of token contributes $90 to TWV
+- LT = 5000 (50%) means $100 of token contributes $50 to TWV
+- LT = 0 means the token provides no collateral value
+</Warning>
+
+## Usage Example
+
+```solidity
+import {CollateralLogic} from "@gearbox-protocol/core-v3/contracts/libraries/CollateralLogic.sol";
+import {PERCENTAGE_FACTOR} from "@gearbox-protocol/core-v3/contracts/libraries/Constants.sol";
+
+contract CollateralChecker {
+    function checkCollateral(
+        address[] memory tokens,
+        address account,
+        address underlying,
+        address oracle
+    ) external view returns (uint256 totalValue, uint256 twv) {
+        // Pack quotas and LTs
+        uint256[] memory quotasPacked = new uint256[](tokens.length);
+        for (uint256 i = 0; i < tokens.length; i++) {
+            uint96 quota = 1000000e18; // 1M quota
+            uint16 lt = 8000; // 80% LT
+            quotasPacked[i] = CollateralLogic.packQuota(quota, lt);
+        }
+
+        // Calculate collateral
+        (totalValue, twv) = CollateralLogic.calcCollateral(
+            tokens,
+            quotasPacked,
+            account,
+            underlying,
+            9000, // 90% LT for underlying
+            type(uint256).max, // No early stop
+            convertToUSD,
+            oracle
+        );
+    }
+
+    function convertToUSD(
+        address oracle,
+        uint256 amount,
+        address token
+    ) internal view returns (uint256) {
+        // Price oracle conversion logic
+    }
+}
+```
+
+## Optimization: Early Termination
+
+```solidity
+// Check if account is sufficiently collateralized
+// Stop as soon as TWV exceeds debt
+function isSufficient(
+    address account,
+    uint256 totalDebt
+) external view returns (bool) {
+    (, uint256 twv) = CollateralLogic.calcCollateral(
+        tokens,
+        quotasPacked,
+        account,
+        underlying,
+        ltUnderlying,
+        totalDebt, // Stop when TWV >= totalDebt
+        convertToUSD,
+        oracle
+    );
+    return twv >= totalDebt;
+}
+```
+
+<Info>
+By setting `twvUSDTarget` to the debt amount, you can quickly verify if an account is solvent without processing all tokens. This optimization is crucial for gas-efficient health checks.
+</Info>
+
+## Related Libraries
+
+- [CreditLogic](/contracts/libraries/credit-logic) - Debt and liquidation calculations
+- [QuotasLogic](/contracts/libraries/quotas-logic) - Quota interest management
+- [Constants](/contracts/libraries/constants) - Protocol constants including `PERCENTAGE_FACTOR`

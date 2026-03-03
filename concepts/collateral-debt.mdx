@@ -1,0 +1,698 @@
+---
+title: Collateral & Debt
+description: Deep dive into collateral valuation, debt accounting, and health factor calculations in Gearbox Protocol V3
+---
+
+Gearbox Protocol V3 implements a sophisticated system for tracking debt, valuing collateral, and ensuring accounts remain adequately collateralized. Understanding these mechanisms is crucial for safely managing leveraged positions.
+
+## Debt Structure
+
+### Debt Components
+
+Each credit account's total debt consists of multiple components:
+
+```solidity
+struct CollateralDebtData {
+    // Debt components
+    uint256 debt;                       // Principal borrowed
+    uint256 cumulativeIndexNow;         // Current interest index
+    uint256 cumulativeIndexLastUpdate;  // Index at last update
+    uint128 cumulativeQuotaInterest;    // Accrued quota interest
+    uint256 accruedInterest;            // Accrued base interest
+    uint256 accruedFees;                // Protocol fees on interest
+    
+    // Totals
+    uint256 totalDebtUSD;               // Total debt in USD
+    
+    // Collateral data
+    uint256 totalValue;                 // Total collateral value
+    uint256 totalValueUSD;              // Total value in USD
+    uint256 twvUSD;                     // Threshold-weighted value
+    
+    // Token tracking
+    uint256 enabledTokensMask;          // Enabled collateral bitmask
+    uint256 quotedTokensMask;           // Quoted tokens bitmask
+    address[] quotedTokens;             // Array of quoted tokens
+    address _poolQuotaKeeper;           // Quota keeper reference
+}
+```
+
+**Total Debt Calculation:**
+
+```solidity
+function calcTotalDebt(CollateralDebtData memory cdd) 
+    internal pure returns (uint256) {
+    return cdd.debt + cdd.accruedInterest + cdd.accruedFees;
+}
+```
+
+Where:
+- `debt`: Principal amount borrowed from the pool
+- `accruedInterest`: Base interest + quota interest
+- `accruedFees`: Protocol fees on the accrued interest
+
+### Base Interest Accounting
+
+Base interest uses a compounding cumulative index:
+
+```solidity
+// Calculate accrued base interest
+function calcAccruedInterest(
+    uint256 amount,
+    uint256 cumulativeIndexLastUpdate,
+    uint256 cumulativeIndexNow
+) internal pure returns (uint256) {
+    if (amount == 0) return 0;
+    return (amount * cumulativeIndexNow) / cumulativeIndexLastUpdate - amount;
+}
+```
+
+**Example:**
+```solidity
+// Account borrows 1000 USDC when index is 1.0
+debt = 1000;
+cumulativeIndexLastUpdate = 1e27;  // RAY precision
+
+// After 1 year at 10% APY, index is ~1.1
+cumulativeIndexNow = 1.1e27;
+
+// Accrued interest calculation
+accruedInterest = (1000 * 1.1e27) / 1e27 - 1000 = 100 USDC
+```
+
+<Info>
+The cumulative index approach enables efficient interest calculation for any time period without complex formulas. The index continuously compounds, reflecting the exponential growth of debt.
+</Info>
+
+### Increasing Debt
+
+When debt increases, the index is adjusted to preserve previously accrued interest:
+
+```solidity
+function calcIncrease(
+    uint256 amount,
+    uint256 debt,
+    uint256 cumulativeIndexNow,
+    uint256 cumulativeIndexLastUpdate
+) internal pure returns (
+    uint256 newDebt,
+    uint256 newCumulativeIndex
+) {
+    if (debt == 0) return (amount, cumulativeIndexNow);
+    
+    newDebt = debt + amount;
+    
+    // Solve for new index such that accrued interest remains constant:
+    // debt * (indexNow / indexOld - 1) = newDebt * (indexNow / indexNew - 1)
+    newCumulativeIndex = (
+        (cumulativeIndexNow * newDebt * INDEX_PRECISION) /
+        (
+            (INDEX_PRECISION * cumulativeIndexNow * debt) / cumulativeIndexLastUpdate +
+            INDEX_PRECISION * amount
+        )
+    );
+}
+```
+
+**Why adjust the index?**
+
+Without adjustment, increasing debt would incorrectly apply all past interest growth to the new debt amount.
+
+### Decreasing Debt
+
+Debt repayment follows a specific priority order:
+
+```solidity
+function calcDecrease(
+    uint256 amount,
+    uint256 debt,
+    uint256 cumulativeIndexNow,
+    uint256 cumulativeIndexLastUpdate,
+    uint128 cumulativeQuotaInterest,
+    uint128 quotaFees,
+    uint16 feeInterest
+) internal pure returns (
+    uint256 newDebt,
+    uint256 newCumulativeIndex,
+    uint256 profit,
+    uint128 newCumulativeQuotaInterest,
+    uint128 newQuotaFees
+)
+```
+
+**Repayment Order:**
+
+1. **Quota Fees** (one-time fees from quota increases)
+   ```solidity
+   if (amountToRepay > quotaFees) {
+       newQuotaFees = 0;
+       amountToRepay -= quotaFees;
+       profit += quotaFees;
+   } else {
+       newQuotaFees = quotaFees - amountToRepay;
+       profit += amountToRepay;
+       amountToRepay = 0;
+   }
+   ```
+
+2. **Quota Interest + Fee** (interest on quotas, split between pool and protocol)
+   ```solidity
+   uint256 quotaProfit = (cumulativeQuotaInterest * feeInterest) / PERCENTAGE_FACTOR;
+   
+   if (amountToRepay >= cumulativeQuotaInterest + quotaProfit) {
+       amountToRepay -= (cumulativeQuotaInterest + quotaProfit);
+       profit += quotaProfit;
+       newCumulativeQuotaInterest = 0;
+   } else {
+       // Pro-rata split between pool and protocol
+       uint256 amountToPool = 
+           (amountToRepay * PERCENTAGE_FACTOR) / (PERCENTAGE_FACTOR + feeInterest);
+       profit += (amountToRepay - amountToPool);
+       newCumulativeQuotaInterest = cumulativeQuotaInterest - amountToPool;
+       amountToRepay = 0;
+   }
+   ```
+
+3. **Base Interest + Fee** (interest on debt, split between pool and protocol)
+   ```solidity
+   uint256 interestAccrued = calcAccruedInterest(
+       debt, cumulativeIndexLastUpdate, cumulativeIndexNow
+   );
+   uint256 profitFromInterest = (interestAccrued * feeInterest) / PERCENTAGE_FACTOR;
+   
+   if (amountToRepay >= interestAccrued + profitFromInterest) {
+       amountToRepay -= (interestAccrued + profitFromInterest);
+       profit += profitFromInterest;
+       newCumulativeIndex = cumulativeIndexNow;
+   } else {
+       // Adjust index based on partial repayment
+       uint256 amountToPool = 
+           (amountToRepay * PERCENTAGE_FACTOR) / (PERCENTAGE_FACTOR + feeInterest);
+       profit += (amountToRepay - amountToPool);
+       
+       newCumulativeIndex = (
+           INDEX_PRECISION * cumulativeIndexNow * cumulativeIndexLastUpdate
+       ) / (
+           INDEX_PRECISION * cumulativeIndexNow -
+           (INDEX_PRECISION * amountToPool * cumulativeIndexLastUpdate) / debt
+       );
+       amountToRepay = 0;
+   }
+   ```
+
+4. **Debt Principal** (original borrowed amount)
+   ```solidity
+   newDebt = debt - amountToRepay;
+   ```
+
+<Note>
+The repayment priority ensures that all interest obligations (and protocol fees) are satisfied before any principal is repaid. This protects lenders and the protocol from strategic partial repayments.
+</Note>
+
+## Collateral Valuation
+
+### Collateral Calculation Task
+
+Different operations require different levels of detail:
+
+```solidity
+enum CollateralCalcTask {
+    GENERIC_PARAMS,              // Basic account info
+    DEBT_ONLY,                   // Debt with all components
+    FULL_COLLATERAL_CHECK_LAZY,  // Lazy collateral check
+    DEBT_COLLATERAL,             // Full debt and collateral
+    DEBT_COLLATERAL_SAFE_PRICES  // Use safe (minimum) prices
+}
+```
+
+**When each mode is used:**
+- `GENERIC_PARAMS`: View functions, informational queries
+- `DEBT_ONLY`: Debt management operations
+- `FULL_COLLATERAL_CHECK_LAZY`: Fast collateral validation
+- `DEBT_COLLATERAL`: Account closure, liquidation calculations
+- `DEBT_COLLATERAL_SAFE_PRICES`: Withdrawals, forbidden token presence
+
+### Calculating Collateral Value
+
+Collateral valuation iterates through enabled tokens:
+
+```solidity
+function calcCollateral(
+    address[] memory quotedTokens,
+    uint256[] memory quotasPacked,
+    address creditAccount,
+    address underlying,
+    uint16 ltUnderlying,
+    uint256 twvUSDTarget,
+    function (address, uint256, address) view returns(uint256) convertToUSDFn,
+    address priceOracle
+) internal view returns (
+    uint256 totalValueUSD,
+    uint256 twvUSD
+) {
+    uint256 underlyingPriceRAY = convertToUSDFn(priceOracle, RAY, underlying);
+    
+    // Process quoted tokens (non-underlying collateral)
+    uint256 len = quotedTokens.length;
+    for (uint256 i; i < len;) {
+        (uint256 quota, uint16 liquidationThreshold) = unpackQuota(quotasPacked[i]);
+        
+        (uint256 valueUSD, uint256 weightedValueUSD) = calcOneTokenCollateral({
+            token: quotedTokens[i],
+            creditAccount: creditAccount,
+            liquidationThreshold: liquidationThreshold,
+            quotaUSD: quota * underlyingPriceRAY / RAY,
+            priceOracle: priceOracle,
+            convertToUSDFn: convertToUSDFn
+        });
+        
+        totalValueUSD += valueUSD;
+        twvUSD += weightedValueUSD;
+        
+        // Early exit if target reached (lazy check optimization)
+        if (twvUSD >= twvUSDTarget) return (totalValueUSD, twvUSD);
+        
+        unchecked { ++i; }
+    }
+    
+    // Process underlying token (always last, always enabled)
+    (uint256 underlyingValueUSD, uint256 underlyingWeightedValueUSD) = 
+        calcOneTokenCollateral({
+            token: underlying,
+            creditAccount: creditAccount,
+            liquidationThreshold: ltUnderlying,
+            quotaUSD: type(uint256).max,  // Unlimited
+            priceOracle: priceOracle,
+            convertToUSDFn: convertToUSDFn
+        });
+    
+    totalValueUSD += underlyingValueUSD;
+    twvUSD += underlyingWeightedValueUSD;
+}
+```
+
+### Single Token Valuation
+
+```solidity
+function calcOneTokenCollateral(
+    address creditAccount,
+    function (address, uint256, address) view returns(uint256) convertToUSDFn,
+    address priceOracle,
+    address token,
+    uint16 liquidationThreshold,
+    uint256 quotaUSD
+) internal view returns (
+    uint256 valueUSD,
+    uint256 weightedValueUSD
+) {
+    uint256 balance = IERC20(token).balanceOf(creditAccount);
+    
+    if (balance != 0) {
+        valueUSD = convertToUSDFn(priceOracle, balance, token);
+        
+        // Weighted value is capped by quota and LT
+        weightedValueUSD = Math.min(
+            valueUSD * liquidationThreshold / PERCENTAGE_FACTOR,
+            quotaUSD
+        );
+    }
+}
+```
+
+**Key Points:**
+- `valueUSD`: Full USD value of the token balance
+- `weightedValueUSD`: Value after applying LT and quota cap
+- Quota limits how much collateral value counts toward debt coverage
+- LT determines what fraction of value protects against liquidation
+
+<Info>
+The weighted value (TWV) is always ≤ the total value. The TWV is what protects the account from liquidation.
+</Info>
+
+## Liquidation Thresholds
+
+### LT Structure and Ramping
+
+Each collateral token has liquidation threshold parameters:
+
+```solidity
+struct CollateralTokenData {
+    address token;
+    uint16 ltInitial;              // LT at ramp start (bps)
+    uint16 ltFinal;                // LT at ramp end (bps)
+    uint40 timestampRampStart;     // When ramping begins
+    uint24 rampDuration;           // Ramp duration in seconds
+}
+```
+
+**LT Ramping Logic:**
+
+```solidity
+function getLiquidationThreshold(
+    uint16 ltInitial,
+    uint16 ltFinal,
+    uint40 timestampRampStart,
+    uint24 rampDuration
+) internal view returns (uint16) {
+    // Before ramp starts
+    if (block.timestamp <= timestampRampStart) {
+        return ltInitial;
+    }
+    
+    uint40 timestampRampEnd = timestampRampStart + rampDuration;
+    
+    // After ramp ends
+    if (block.timestamp >= timestampRampEnd) {
+        return ltFinal;
+    }
+    
+    // During ramp: linear interpolation
+    return uint16(
+        (
+            ltInitial * (timestampRampEnd - block.timestamp) +
+            ltFinal * (block.timestamp - timestampRampStart)
+        ) / (timestampRampEnd - timestampRampStart)
+    );
+}
+```
+
+**Use Cases for Ramping:**
+- Gradually reduce risk exposure to a token
+- Smooth transition when token parameters change
+- Prevent sudden liquidation cascades
+- Give users time to adjust positions
+
+<Tip>
+Governance uses LT ramping to safely deprecate collateral tokens or reduce risk limits. Users should monitor ramping schedules to avoid unexpected liquidations.
+</Tip>
+
+### Example LT Values
+
+Typical liquidation thresholds:
+
+| Asset Type | Typical LT | TWV Contribution |
+|------------|-----------|------------------|
+| Underlying | 90-95% | $0.90-0.95 per $1 |
+| Stablecoins | 85-90% | $0.85-0.90 per $1 |
+| Blue-chip (ETH, BTC) | 80-85% | $0.80-0.85 per $1 |
+| DeFi tokens | 70-80% | $0.70-0.80 per $1 |
+| Volatile/New | 60-70% | $0.60-0.70 per $1 |
+
+## Health Factor
+
+### Health Factor Calculation
+
+The health factor determines if an account can be liquidated:
+
+```solidity
+healthFactor = (twvUSD * 10000) / totalDebtUSD
+```
+
+Where:
+- `twvUSD`: Total weighted value of collateral
+- `totalDebtUSD`: Total debt including all interest and fees
+- Result in basis points (10000 = 100% = 1.0x)
+
+**Health Factor Thresholds:**
+- `healthFactor >= 10000`: Account is healthy (fully collateralized)
+- `healthFactor < 10000`: Account is liquidatable
+- `healthFactor >> 10000`: Account has significant collateral buffer
+
+**Example:**
+```solidity
+// Account has:
+// - $10,000 USDC collateral (LT = 90%)
+// - $8,000 debt
+
+twvUSD = 10000 * 0.90 = 9000
+totalDebtUSD = 8000
+
+healthFactor = (9000 * 10000) / 8000 = 11250  // 112.5%
+
+// Account is healthy with 12.5% buffer
+```
+
+### Collateral Check Optimization
+
+To reduce gas costs, collateral checks can use hints and lazy evaluation:
+
+```solidity
+struct FullCheckParams {
+    uint256[] collateralHints;  // Token masks to check first
+    uint16 minHealthFactor;     // Required health factor
+}
+```
+
+**Lazy Evaluation:**
+
+```solidity
+// Set TWV target to debt amount (scaled by required health factor)
+twvUSDTarget = totalDebtUSD * minHealthFactor / 10000;
+
+// Stop calculating when twvUSD >= twvUSDTarget
+```
+
+If hinted tokens provide sufficient collateral, remaining tokens are skipped.
+
+**Best Practice Example:**
+```solidity
+// Account has USDC, WETH, and 10 other small positions
+// USDC and WETH alone cover all debt
+
+uint256[] memory hints = [usdcMask, wethMask];
+setFullCheckParams(hints, 10000);
+
+// Check will evaluate USDC and WETH first
+// Skip other 10 tokens if TWV already sufficient
+// Save ~200k+ gas
+```
+
+<Warning>
+Lazy checks may underestimate total collateral value. They're safe for determining "is account healthy?" but not for calculating exact TWV.
+</Warning>
+
+## Safe Prices
+
+In certain situations, safe pricing is activated:
+
+```solidity
+if (useSafePrices || forbiddenTokensEnabled) {
+    task = CollateralCalcTask.DEBT_COLLATERAL_SAFE_PRICES;
+}
+```
+
+**Safe Price = `min(mainPrice, reservePrice)`**
+
+This uses the minimum between:
+- Main price feed (typically Chainlink)
+- Reserve price feed (backup oracle)
+
+**When Safe Prices Are Used:**
+- Withdrawing collateral
+- Account has forbidden tokens enabled
+- Explicit request via `useSafePrices` parameter
+
+Safe pricing protects against:
+- Price feed manipulation
+- Stale oracle data
+- Flash loan attacks
+- Market dislocations
+
+## Managing Debt Actions
+
+### ManageDebtAction Enum
+
+```solidity
+enum ManageDebtAction {
+    INCREASE_DEBT,  // Borrow more from pool
+    DECREASE_DEBT   // Repay debt to pool
+}
+```
+
+### Manage Debt Function
+
+```solidity
+function manageDebt(
+    address creditAccount,
+    uint256 amount,
+    uint256 enabledTokensMask,
+    ManageDebtAction action
+) external returns (
+    uint256 newDebt,
+    uint256 tokensToEnable,
+    uint256 tokensToDisable
+);
+```
+
+**Function Flow:**
+
+1. **Update Base Interest**: Calculate current cumulative index
+2. **Perform Action**:
+   - `INCREASE_DEBT`: Borrow from pool, adjust index
+   - `DECREASE_DEBT`: Repay components in priority order
+3. **Update Account Info**: Store new debt, index, quota interest, fees
+4. **Update Pool**: Call `lendCreditAccount()` or `repayCreditAccount()`
+5. **Return Results**: New debt amount and token mask changes
+
+## Liquidation Calculations
+
+### Liquidation Payments
+
+When an account is liquidated, payments are calculated:
+
+```solidity
+function calcLiquidationPayments(
+    CollateralDebtData memory collateralDebtData,
+    uint16 feeLiquidation,
+    uint16 liquidationDiscount,
+    function (uint256) view returns (uint256) amountWithFeeFn,
+    function (uint256) view returns (uint256) amountMinusFeeFn
+) internal view returns (
+    uint256 amountToPool,
+    uint256 remainingFunds,
+    uint256 profit,
+    uint256 loss
+)
+```
+
+**Calculation Steps:**
+
+1. **Calculate Total Debt**:
+   ```solidity
+   amountToPool = calcTotalDebt(collateralDebtData);
+   ```
+
+2. **Apply Liquidation Fee**:
+   ```solidity
+   amountToPool += totalValue * feeLiquidation / PERCENTAGE_FACTOR;
+   ```
+
+3. **Apply Liquidation Discount**:
+   ```solidity
+   totalFunds = totalValue * liquidationDiscount / PERCENTAGE_FACTOR;
+   ```
+   (Discount = 1 - Premium, e.g., 95% discount = 5% premium to liquidator)
+
+4. **Determine Repayment**:
+   ```solidity
+   uint256 amountToPoolWithFee = amountWithFeeFn(amountToPool);
+   
+   if (totalFunds > amountToPoolWithFee) {
+       remainingFunds = totalFunds - amountToPoolWithFee;
+   } else {
+       amountToPoolWithFee = totalFunds;
+       amountToPool = amountMinusFeeFn(totalFunds);
+   }
+   ```
+
+5. **Calculate Profit/Loss**:
+   ```solidity
+   uint256 debtWithInterest = debt + accruedInterest;
+   
+   if (amountToPool >= debtWithInterest) {
+       profit = amountToPool - debtWithInterest;
+   } else {
+       loss = debtWithInterest - amountToPool;
+   }
+   ```
+
+### Liquidation Scenarios
+
+<AccordionGroup>
+  <Accordion title="Profitable Liquidation">
+    Account has sufficient collateral to cover debt + fees:
+
+    ```
+    Total Value: $10,000
+    Total Debt: $9,500
+    Liquidation Fee: 1% = $100
+    Liquidation Discount: 95% (5% premium)
+    
+    Available Funds: $10,000 * 0.95 = $9,500
+    Amount to Pool: $9,500 + $100 = $9,600
+    
+    Result:
+    - Too little funds to cover pool payment
+    - All $9,500 goes to pool
+    - Profit: $0 (would be negative, becomes loss)
+    - Loss: $100
+    - Remaining Funds: $0
+    ```
+  </Accordion>
+
+  <Accordion title="Liquidation with Remaining Funds">
+    Account has excess collateral:
+
+    ```
+    Total Value: $12,000
+    Total Debt: $9,000
+    Liquidation Fee: 1% = $120
+    Liquidation Discount: 95%
+    
+    Available Funds: $12,000 * 0.95 = $11,400
+    Amount to Pool: $9,000 + $120 = $9,120
+    
+    Result:
+    - Pool receives: $9,120
+    - Protocol profit: $120
+    - Remaining to user: $11,400 - $9,120 = $2,280
+    - Loss: $0
+    ```
+  </Accordion>
+
+  <Accordion title="Undercollateralized Liquidation">
+    Account cannot fully cover debt:
+
+    ```
+    Total Value: $8,000
+    Total Debt: $9,500
+    Liquidation Fee: 1% = $80
+    Liquidation Discount: 95%
+    
+    Available Funds: $8,000 * 0.95 = $7,600
+    Amount to Pool: $9,500 + $80 = $9,580
+    
+    Result:
+    - Pool receives: $7,600 (all available)
+    - Protocol profit: $0
+    - Loss: $9,500 - $7,600 = $1,900 (bad debt)
+    - Remaining Funds: $0
+    ```
+  </Accordion>
+</AccordionGroup>
+
+<Note>
+Losses are first covered by burning treasury shares. If insufficient, the pool incurs bad debt which dilutes all LPs.
+</Note>
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Monitoring Health" icon="heart-pulse">
+    - Check health factor regularly
+    - Maintain buffer above 10000 (100%)
+    - Monitor LT ramping schedules
+    - Track collateral price volatility
+  </Card>
+  
+  <Card title="Debt Management" icon="money-bill-trend-up">
+    - Understand repayment priority
+    - Account for all interest components
+    - Consider quota costs vs. benefits
+    - Plan for debt limit constraints
+  </Card>
+  
+  <Card title="Collateral Strategy" icon="coins">
+    - Use high-LT tokens when possible
+    - Enable only necessary collateral
+    - Provide collateral hints for gas savings
+    - Avoid forbidden tokens
+  </Card>
+  
+  <Card title="Risk Management" icon="shield-halved">
+    - Diversify collateral types
+    - Prepare for market volatility
+    - Understand liquidation mechanics
+    - Use bot permissions for protection
+  </Card>
+</CardGroup>

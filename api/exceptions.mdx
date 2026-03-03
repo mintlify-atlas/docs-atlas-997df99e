@@ -1,0 +1,812 @@
+---
+title: Exceptions
+description: Error types thrown by Gearbox Protocol Core V3 contracts
+---
+
+Gearbox Protocol uses custom errors for gas-efficient error handling. All errors are defined in `IExceptions.sol`.
+
+## General Errors
+
+### ZeroAddressException
+
+```solidity
+error ZeroAddressException()
+```
+
+Thrown when attempting to set an important address to zero address.
+
+### AmountCantBeZeroException
+
+```solidity
+error AmountCantBeZeroException()
+```
+
+Thrown when attempting to pass a zero amount to a funding-related operation.
+
+### IncorrectParameterException
+
+```solidity
+error IncorrectParameterException()
+```
+
+Thrown on incorrect input parameter.
+
+### InsufficientBalanceException
+
+```solidity
+error InsufficientBalanceException()
+```
+
+Thrown when balance is insufficient to perform an operation.
+
+### ValueOutOfRangeException
+
+```solidity
+error ValueOutOfRangeException()
+```
+
+Thrown when a parameter is out of acceptable range.
+
+### ReceiveIsNotAllowedException
+
+```solidity
+error ReceiveIsNotAllowedException()
+```
+
+Thrown when trying to send ETH to a contract that is not allowed to receive ETH directly.
+
+### AddressIsNotContractException
+
+```solidity
+error AddressIsNotContractException(address)
+```
+
+Thrown when attempting to set an EOA as an important contract in the system.
+
+<ParamField path="address" type="address">
+  The address that is not a contract
+</ParamField>
+
+### TokenNotAllowedException
+
+```solidity
+error TokenNotAllowedException()
+```
+
+Thrown when attempting to receive a token that is not a collateral token or was forbidden.
+
+### TokenAlreadyAddedException
+
+```solidity
+error TokenAlreadyAddedException()
+```
+
+Thrown when attempting to add a token that is already in a collateral list.
+
+### TokenIsNotQuotedException
+
+```solidity
+error TokenIsNotQuotedException()
+```
+
+Thrown when attempting to use quota-related logic for a token that is not quoted in quota keeper.
+
+### TargetContractNotAllowedException
+
+```solidity
+error TargetContractNotAllowedException()
+```
+
+Thrown when attempting to interact with an address that is not a valid target contract.
+
+### NotImplementedException
+
+```solidity
+error NotImplementedException()
+```
+
+Thrown when a function is not implemented.
+
+## Contracts Register Errors
+
+### RegisteredCreditManagerOnlyException
+
+```solidity
+error RegisteredCreditManagerOnlyException()
+```
+
+Thrown when an address is expected to be a registered credit manager, but is not.
+
+### RegisteredPoolOnlyException
+
+```solidity
+error RegisteredPoolOnlyException()
+```
+
+Thrown when an address is expected to be a registered pool, but is not.
+
+## Address Provider Errors
+
+### AddressNotFoundException
+
+```solidity
+error AddressNotFoundException()
+```
+
+Thrown when an address key is not found in address provider.
+
+## Pool Errors
+
+### IncompatibleCreditManagerException
+
+```solidity
+error IncompatibleCreditManagerException()
+```
+
+Thrown when a credit manager being connected has a wrong pool address.
+
+### IncompatibleSuccessorException
+
+```solidity
+error IncompatibleSuccessorException()
+```
+
+Thrown when attempting to set an incompatible successor staking contract.
+
+### VotingContractNotAllowedException
+
+```solidity
+error VotingContractNotAllowedException()
+```
+
+Thrown when attempting to vote in a non-approved contract.
+
+### InsufficientVotesException
+
+```solidity
+error InsufficientVotesException()
+```
+
+Thrown when attempting to unvote more votes than exist.
+
+### BorrowingMoreThanU2ForbiddenException
+
+```solidity
+error BorrowingMoreThanU2ForbiddenException()
+```
+
+Thrown when attempting to borrow more than the second point on a two-point curve.
+
+### CreditManagerCantBorrowException
+
+```solidity
+error CreditManagerCantBorrowException()
+```
+
+Thrown when a credit manager attempts to borrow more than its limit in the current block, or in general.
+
+### IncompatiblePoolQuotaKeeperException
+
+```solidity
+error IncompatiblePoolQuotaKeeperException()
+```
+
+Thrown when attempting to connect a quota keeper to an incompatible pool.
+
+### IncompatibleGaugeException
+
+```solidity
+error IncompatibleGaugeException()
+```
+
+Thrown when attempting to connect a gauge to an incompatible pool quota keeper.
+
+### QuotaIsOutOfBoundsException
+
+```solidity
+error QuotaIsOutOfBoundsException()
+```
+
+Thrown when the quota is outside of min/max bounds.
+
+## Credit Manager Errors
+
+### NotEnoughCollateralException
+
+```solidity
+error NotEnoughCollateralException()
+```
+
+Thrown when failing a full collateral check after multicall.
+
+### AllowanceFailedException
+
+```solidity
+error AllowanceFailedException()
+```
+
+Thrown when an attempt to approve a collateral token to adapter's target contract fails.
+
+### CreditAccountDoesNotExistException
+
+```solidity
+error CreditAccountDoesNotExistException()
+```
+
+Thrown when attempting to perform an action for a credit account that does not exist.
+
+### TooManyTokensException
+
+```solidity
+error TooManyTokensException()
+```
+
+Thrown when configurator attempts to add more than 255 collateral tokens.
+
+### TooManyEnabledTokensException
+
+```solidity
+error TooManyEnabledTokensException()
+```
+
+Thrown when more than the maximum number of tokens were enabled on a credit account.
+
+### ActiveCreditAccountNotSetException
+
+```solidity
+error ActiveCreditAccountNotSetException()
+```
+
+Thrown when attempting to execute a protocol interaction without active credit account set.
+
+### DebtUpdatedTwiceInOneBlockException
+
+```solidity
+error DebtUpdatedTwiceInOneBlockException()
+```
+
+Thrown when trying to update credit account's debt more than once in the same block.
+
+### DebtToZeroWithActiveQuotasException
+
+```solidity
+error DebtToZeroWithActiveQuotasException()
+```
+
+Thrown when trying to repay all debt while having active quotas.
+
+### UpdateQuotaOnZeroDebtAccountException
+
+```solidity
+error UpdateQuotaOnZeroDebtAccountException()
+```
+
+Thrown when a zero-debt account attempts to update quota.
+
+### CloseAccountWithNonZeroDebtException
+
+```solidity
+error CloseAccountWithNonZeroDebtException()
+```
+
+Thrown when attempting to close an account with non-zero debt.
+
+### InsufficientRemainingFundsException
+
+```solidity
+error InsufficientRemainingFundsException()
+```
+
+Thrown when value of funds remaining on the account after liquidation is insufficient.
+
+### ActiveCreditAccountOverridenException
+
+```solidity
+error ActiveCreditAccountOverridenException()
+```
+
+Thrown when Credit Facade tries to write over a non-zero active credit account.
+
+## Credit Configurator Errors
+
+### IncorrectTokenContractException
+
+```solidity
+error IncorrectTokenContractException()
+```
+
+Thrown when attempting to use a non-ERC20 contract or an EOA as a token.
+
+### IncorrectLiquidationThresholdException
+
+```solidity
+error IncorrectLiquidationThresholdException()
+```
+
+Thrown when the newly set liquidation threshold is zero or greater than the underlying's LT.
+
+### IncorrectLimitsException
+
+```solidity
+error IncorrectLimitsException()
+```
+
+Thrown when borrowing limits are incorrect: minLimit > maxLimit or maxLimit > blockLimit.
+
+### IncorrectExpirationDateException
+
+```solidity
+error IncorrectExpirationDateException()
+```
+
+Thrown when the new expiration date is less than the current expiration date or current timestamp.
+
+### IncompatibleContractException
+
+```solidity
+error IncompatibleContractException()
+```
+
+Thrown when a contract returns a wrong credit manager or reverts when trying to retrieve it.
+
+### AdapterIsNotRegisteredException
+
+```solidity
+error AdapterIsNotRegisteredException()
+```
+
+Thrown when attempting to forbid an adapter that is not registered in the credit manager.
+
+### IncorrectAdaptersSetException
+
+```solidity
+error IncorrectAdaptersSetException()
+```
+
+Thrown when new credit configurator's set of allowed adapters differs from the current one.
+
+### RampDurationTooShortException
+
+```solidity
+error RampDurationTooShortException()
+```
+
+Thrown when attempting to schedule a token's LT ramping that is too short in duration.
+
+### InconsistentLiquidationFeesException
+
+```solidity
+error InconsistentLiquidationFeesException()
+```
+
+Thrown when attempting to set liquidation fees such that the sum of premium and fee changes.
+
+### InconsistentExpiredLiquidationFeesException
+
+```solidity
+error InconsistentExpiredLiquidationFeesException()
+```
+
+Thrown when attempting to set expired liquidation fees such that the sum of premium and fee changes.
+
+## Credit Facade Errors
+
+### ForbiddenInWhitelistedModeException
+
+```solidity
+error ForbiddenInWhitelistedModeException()
+```
+
+Thrown when attempting to perform an action that is forbidden in whitelisted mode.
+
+### NotAllowedWhenNotExpirableException
+
+```solidity
+error NotAllowedWhenNotExpirableException()
+```
+
+Thrown when credit facade is not expirable, and attempted action requires expirability.
+
+### UnknownMethodException
+
+```solidity
+error UnknownMethodException(bytes4 selector)
+```
+
+Thrown when a selector that doesn't match any allowed function is passed to the credit facade in a multicall.
+
+<ParamField path="selector" type="bytes4">
+  The unknown function selector
+</ParamField>
+
+### CreditAccountNotLiquidatableException
+
+```solidity
+error CreditAccountNotLiquidatableException()
+```
+
+Thrown when a liquidator tries to liquidate an account with a health factor above 1.
+
+### CreditAccountNotLiquidatableWithLossException
+
+```solidity
+error CreditAccountNotLiquidatableWithLossException()
+```
+
+Thrown when a liquidator tries to liquidate an account with loss but violates the loss policy.
+
+### BorrowedBlockLimitException
+
+```solidity
+error BorrowedBlockLimitException()
+```
+
+Thrown when too much new debt was taken within a single block.
+
+### BorrowAmountOutOfLimitsException
+
+```solidity
+error BorrowAmountOutOfLimitsException()
+```
+
+Thrown when the new debt principal for a credit account falls outside of borrowing limits.
+
+### NotAllowedAfterExpirationException
+
+```solidity
+error NotAllowedAfterExpirationException()
+```
+
+Thrown when a user attempts to open an account via an expired credit facade.
+
+### ExpectedBalancesAlreadySetException
+
+```solidity
+error ExpectedBalancesAlreadySetException()
+```
+
+Thrown when expected balances are attempted to be set twice without performing a slippage check.
+
+### ExpectedBalancesNotSetException
+
+```solidity
+error ExpectedBalancesNotSetException()
+```
+
+Thrown when attempting to perform a slippage check when expected balances are not set.
+
+### BalanceLessThanExpectedException
+
+```solidity
+error BalanceLessThanExpectedException(address token)
+```
+
+Thrown when balance of at least one token is less than expected during a slippage check.
+
+<ParamField path="token" type="address">
+  The token with insufficient balance
+</ParamField>
+
+### ForbiddenTokensException
+
+```solidity
+error ForbiddenTokensException(uint256 forbiddenTokensMask)
+```
+
+Thrown when trying to perform an action that is forbidden when credit account has enabled forbidden tokens.
+
+<ParamField path="forbiddenTokensMask" type="uint256">
+  Bitmask of forbidden tokens
+</ParamField>
+
+### ForbiddenTokenQuotaIncreasedException
+
+```solidity
+error ForbiddenTokenQuotaIncreasedException(address token)
+```
+
+Thrown when forbidden token quota is increased during the multicall.
+
+<ParamField path="token" type="address">
+  The forbidden token
+</ParamField>
+
+### ForbiddenTokenBalanceIncreasedException
+
+```solidity
+error ForbiddenTokenBalanceIncreasedException(address token)
+```
+
+Thrown when enabled forbidden token balance is increased during the multicall.
+
+<ParamField path="token" type="address">
+  The forbidden token
+</ParamField>
+
+### RemainingTokenBalanceIncreasedException
+
+```solidity
+error RemainingTokenBalanceIncreasedException(address token)
+```
+
+Thrown when the remaining token balance is increased during liquidation.
+
+<ParamField path="token" type="address">
+  The token with increased balance
+</ParamField>
+
+### NotApprovedBotException
+
+```solidity
+error NotApprovedBotException(address bot)
+```
+
+Thrown when `botMulticall` is called by an address that is not approved by account owner or is forbidden.
+
+<ParamField path="bot" type="address">
+  The unapproved bot address
+</ParamField>
+
+### NoPermissionException
+
+```solidity
+error NoPermissionException(uint256 permission)
+```
+
+Thrown when attempting to perform a multicall action with no permission for it.
+
+<ParamField path="permission" type="uint256">
+  The missing permission
+</ParamField>
+
+### UnexpectedPermissionsException
+
+```solidity
+error UnexpectedPermissionsException(uint256 permissions)
+```
+
+Thrown when attempting to give a bot unexpected permissions.
+
+<ParamField path="permissions" type="uint256">
+  The unexpected permissions
+</ParamField>
+
+### CustomHealthFactorTooLowException
+
+```solidity
+error CustomHealthFactorTooLowException()
+```
+
+Thrown when a custom health factor parameter lower than 10000 (100%) is passed into the full collateral check.
+
+### InvalidCollateralHintException
+
+```solidity
+error InvalidCollateralHintException(uint256 mask)
+```
+
+Thrown when submitted collateral hint is not a valid token mask.
+
+<ParamField path="mask" type="uint256">
+  The invalid mask
+</ParamField>
+
+### UnderlyingIsNotLiquidatableException
+
+```solidity
+error UnderlyingIsNotLiquidatableException()
+```
+
+Thrown when trying to seize underlying token during partial liquidation.
+
+### SeizedLessThanRequiredException
+
+```solidity
+error SeizedLessThanRequiredException(uint256 seizedAmount)
+```
+
+Thrown when amount of collateral seized during partial liquidation is less than required.
+
+<ParamField path="seizedAmount" type="uint256">
+  The actual seized amount
+</ParamField>
+
+## Access Control Errors
+
+### CallerNotCreditAccountOwnerException
+
+```solidity
+error CallerNotCreditAccountOwnerException()
+```
+
+Thrown when attempting to call an access restricted function not as credit account owner.
+
+### CallerNotConfiguratorException
+
+```solidity
+error CallerNotConfiguratorException()
+```
+
+Thrown when attempting to call an access restricted function not as configurator.
+
+### CallerNotAccountFactoryException
+
+```solidity
+error CallerNotAccountFactoryException()
+```
+
+Thrown when attempting to call an access restricted function not as account factory.
+
+### CallerNotCreditManagerException
+
+```solidity
+error CallerNotCreditManagerException()
+```
+
+Thrown when attempting to call an access restricted function not as credit manager.
+
+### CallerNotCreditFacadeException
+
+```solidity
+error CallerNotCreditFacadeException()
+```
+
+Thrown when attempting to call an access restricted function not as credit facade.
+
+### CallerNotPausableAdminException
+
+```solidity
+error CallerNotPausableAdminException()
+```
+
+Thrown when attempting to pause a contract without pausable admin rights.
+
+### CallerNotUnpausableAdminException
+
+```solidity
+error CallerNotUnpausableAdminException()
+```
+
+Thrown when attempting to unpause a contract without unpausable admin rights.
+
+### CallerNotGaugeException
+
+```solidity
+error CallerNotGaugeException()
+```
+
+Thrown when attempting to call an access restricted function not as gauge.
+
+### CallerNotPoolQuotaKeeperException
+
+```solidity
+error CallerNotPoolQuotaKeeperException()
+```
+
+Thrown when attempting to call an access restricted function not as quota keeper.
+
+### CallerNotVoterException
+
+```solidity
+error CallerNotVoterException()
+```
+
+Thrown when attempting to call an access restricted function not as voter.
+
+### CallerNotAdapterException
+
+```solidity
+error CallerNotAdapterException()
+```
+
+Thrown when attempting to call an access restricted function not as allowed adapter.
+
+### CallerNotMigratorException
+
+```solidity
+error CallerNotMigratorException()
+```
+
+Thrown when attempting to call an access restricted function not as migrator.
+
+### CallerNotExecutorException
+
+```solidity
+error CallerNotExecutorException()
+```
+
+Thrown when an address that is not the designated executor attempts to execute a transaction.
+
+### CallerNotVetoAdminException
+
+```solidity
+error CallerNotVetoAdminException()
+```
+
+Thrown when attempting to call an access restricted function not as veto admin.
+
+## Bot List Errors
+
+### InvalidBotException
+
+```solidity
+error InvalidBotException()
+```
+
+Thrown when attempting to set non-zero permissions for a forbidden bot.
+
+### IncorrectBotPermissionsException
+
+```solidity
+error IncorrectBotPermissionsException()
+```
+
+Thrown when attempting to set permissions for a bot that don't meet its requirements.
+
+### TooManyActiveBotsException
+
+```solidity
+error TooManyActiveBotsException()
+```
+
+Thrown when attempting to set non-zero permissions for too many bots.
+
+## Account Factory Errors
+
+### MasterCreditAccountAlreadyDeployedException
+
+```solidity
+error MasterCreditAccountAlreadyDeployedException()
+```
+
+Thrown when trying to deploy second master credit account for a credit manager.
+
+### CreditAccountIsInUseException
+
+```solidity
+error CreditAccountIsInUseException()
+```
+
+Thrown when trying to rescue funds from a credit account that is currently in use.
+
+## Price Oracle Errors
+
+### IncorrectPriceFeedException
+
+```solidity
+error IncorrectPriceFeedException()
+```
+
+Thrown when attempting to set a token price feed to an address that is not a correct price feed.
+
+### PriceFeedDoesNotExistException
+
+```solidity
+error PriceFeedDoesNotExistException()
+```
+
+Thrown when attempting to interact with a price feed for a token not added to the price oracle.
+
+### PriceFeedIsNotUpdatableException
+
+```solidity
+error PriceFeedIsNotUpdatableException()
+```
+
+Thrown when trying to apply an on-demand price update to a non-updatable price feed.
+
+### IncorrectPriceException
+
+```solidity
+error IncorrectPriceException()
+```
+
+Thrown when price feed returns incorrect price for a token.
+
+### StalePriceException
+
+```solidity
+error StalePriceException()
+```
+
+Thrown when token's price feed becomes stale.

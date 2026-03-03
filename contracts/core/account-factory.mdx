@@ -1,0 +1,325 @@
+---
+title: DefaultAccountFactoryV3
+description: Reusable credit account factory using clones pattern with delayed reusability queue
+---
+
+## Overview
+
+DefaultAccountFactoryV3 is a factory contract that manages credit account deployment and reuse. It uses OpenZeppelin's clones pattern for efficient account creation and maintains separate queues for each credit manager to enable account reuse after a safety delay.
+
+**Contract Type:** `ACCOUNT_FACTORY::DEFAULT`
+
+**Version:** 3.10
+
+**Source:** [DefaultAccountFactoryV3.sol](https://github.com/Gearbox-protocol/core-v3/blob/main/contracts/core/DefaultAccountFactoryV3.sol)
+
+## Key Features
+
+### Efficient Deployment
+
+Uses the clones proxy pattern to deploy credit accounts at minimal gas cost. Each credit manager has a master credit account that is cloned when new accounts are needed.
+
+### Account Reusability
+
+Accounts returned to the factory are queued for reuse after a 3-day delay. This design:
+- Reduces deployment costs when accounts are available in the queue
+- Allows DAO to rescue funds accidentally left in accounts
+- Protects against attacks involving immediate account reopening
+
+### Per-Manager Queues
+
+Each credit manager has its own queue of reusable accounts, ensuring accounts are only reused by their originating credit manager.
+
+## Constants
+
+### delay
+
+```solidity
+uint40 public constant delay = 3 days
+```
+
+The delay period (3 days) after which returned credit accounts become reusable.
+
+## Core Functions
+
+### takeCreditAccount
+
+```solidity
+function takeCreditAccount(uint256, uint256) external returns (address creditAccount)
+```
+
+Provides a credit account to the calling credit manager. Returns a reusable account from the queue if available, otherwise deploys a new one.
+
+<Note>
+The function parameters are ignored and kept only for backward compatibility.
+</Note>
+
+**Returns:** Address of the provided credit account
+
+**Reverts:** `CallerNotCreditManagerException` if caller is not a registered credit manager
+
+**Access:** Only callable by registered credit managers
+
+**Flow:**
+1. Checks if caller is a registered credit manager
+2. If queue is empty or first account is not yet reusable, deploys new account by cloning master
+3. Otherwise, returns first reusable account from queue and advances queue head
+
+**Emits:**
+- `DeployCreditAccount` (if new account is deployed)
+- `TakeCreditAccount`
+
+**Example:**
+```solidity
+// Called by credit manager when opening a new position
+address account = factory.takeCreditAccount(0, 0);
+```
+
+### returnCreditAccount
+
+```solidity
+function returnCreditAccount(address creditAccount) external
+```
+
+Returns a used credit account to the queue. The account becomes reusable after the delay period.
+
+<ParamField path="creditAccount" type="address">
+  Address of the credit account being returned
+</ParamField>
+
+**Access:** Only callable by registered credit managers
+
+**Expects:**
+- Credit account is connected to the calling credit manager
+- Credit manager has set the account's borrower to zero-address
+
+**Emits:** `ReturnCreditAccount`
+
+**Example:**
+```solidity
+// Called by credit manager when closing a position
+factory.returnCreditAccount(creditAccount);
+```
+
+## Configuration Functions
+
+### addCreditManager
+
+```solidity
+function addCreditManager(address creditManager) external
+```
+
+Registers a new credit manager with the factory and deploys its master credit account.
+
+<ParamField path="creditManager" type="address">
+  Address of the credit manager to add
+</ParamField>
+
+**Access:** No explicit access control (relies on credit manager validation)
+
+**Reverts:** `MasterCreditAccountAlreadyDeployedException` if credit manager is already registered
+
+**Emits:** `AddCreditManager(creditManager, masterCreditAccount)`
+
+**Flow:**
+1. Checks that credit manager is not already registered
+2. Deploys new master credit account for the credit manager
+3. Stores master account address in factory params
+
+**Example:**
+```solidity
+// Register new credit manager
+factory.addCreditManager(newCreditManager);
+```
+
+### rescue
+
+```solidity
+function rescue(
+    address creditAccount,
+    address target,
+    bytes calldata data
+) external
+```
+
+Executes a function call from a credit account to rescue funds accidentally left after closure.
+
+<ParamField path="creditAccount" type="address">
+  Credit account to execute the call from
+</ParamField>
+
+<ParamField path="target" type="address">
+  Contract to call
+</ParamField>
+
+<ParamField path="data" type="bytes">
+  Calldata for the target contract
+</ParamField>
+
+**Access:** Only callable by owner (Instance Manager)
+
+**Reverts:** `CreditAccountIsInUseException` if the account has a non-zero borrower
+
+**Emits:** `Rescue(creditAccount, target, data)`
+
+<Warning>
+This function can only be called on accounts that are not currently in use (borrower is zero-address).
+</Warning>
+
+**Example:**
+```solidity
+// Rescue USDC accidentally left in account
+bytes memory transferData = abi.encodeWithSignature(
+    "transfer(address,uint256)",
+    recipient,
+    amount
+);
+factory.rescue(creditAccount, usdcAddress, transferData);
+```
+
+## View Functions
+
+### serialize
+
+```solidity
+function serialize() external view returns (bytes memory)
+```
+
+Returns empty bytes. This function exists for interface compatibility but the factory has no state to serialize.
+
+## Internal Structures
+
+### FactoryParams
+
+```solidity
+struct FactoryParams {
+    address masterCreditAccount;  // Master account to clone
+    uint40 head;                  // Next account index to take
+    uint40 tail;                  // Last returned account index
+}
+```
+
+Stores factory and queue parameters for each credit manager.
+
+### QueuedAccount
+
+```solidity
+struct QueuedAccount {
+    address creditAccount;  // Account address
+    uint40 reusableAfter;   // Timestamp when account becomes reusable
+}
+```
+
+Stores queued account information including when it can be reused.
+
+## Queue Management
+
+### How the Queue Works
+
+The factory maintains a circular buffer (queue) for each credit manager:
+
+1. **Taking an account:**
+   - Check if `head == tail` (queue empty)
+   - Check if account at `head` is reusable (`block.timestamp >= reusableAfter`)
+   - If queue empty or not reusable: deploy new account
+   - Otherwise: return account at `head` and increment `head`
+
+2. **Returning an account:**
+   - Add account to position `tail` with `reusableAfter = block.timestamp + 3 days`
+   - Increment `tail`
+
+### Queue State Diagram
+
+```
+Empty Queue: head == tail
+┌─────────────┐
+│  head/tail  │
+└─────────────┘
+
+Queue with accounts:
+┌────┬────┬────┬────┬────┐
+│ A₁ │ A₂ │ A₃ │    │    │
+└────┴────┴────┴────┴────┘
+  ↑              ↑
+ head          tail
+```
+
+## Events
+
+### DeployCreditAccount
+
+```solidity
+event DeployCreditAccount(
+    address indexed creditAccount,
+    address indexed creditManager
+)
+```
+
+Emitted when a new credit account is deployed.
+
+### TakeCreditAccount
+
+```solidity
+event TakeCreditAccount(
+    address indexed creditAccount,
+    address indexed creditManager
+)
+```
+
+Emitted when a credit account is taken by a credit manager.
+
+### ReturnCreditAccount
+
+```solidity
+event ReturnCreditAccount(
+    address indexed creditAccount,
+    address indexed creditManager
+)
+```
+
+Emitted when a used credit account is returned to the queue.
+
+### AddCreditManager
+
+```solidity
+event AddCreditManager(
+    address indexed creditManager,
+    address masterCreditAccount
+)
+```
+
+Emitted when a new credit manager is added to the factory.
+
+### Rescue
+
+```solidity
+event Rescue(
+    address indexed creditAccount,
+    address indexed target,
+    bytes data
+)
+```
+
+Emitted when the DAO performs a rescue call from a credit account.
+
+## Access Control
+
+The factory is owned by the Instance Manager Proxy, which is set during construction. The owner can:
+- Execute rescue calls on idle credit accounts
+
+## Usage Example
+
+```solidity
+// 1. Register a new credit manager
+factory.addCreditManager(creditManagerAddress);
+
+// 2. Credit manager takes an account when opening a position
+address account = IDefaultAccountFactoryV3(factory).takeCreditAccount(0, 0);
+
+// 3. Credit manager returns the account when closing a position
+IDefaultAccountFactoryV3(factory).returnCreditAccount(account);
+
+// 4. After 3 days, the account can be reused for a new position
+// On next takeCreditAccount call, the same account will be returned
+// instead of deploying a new one
+```

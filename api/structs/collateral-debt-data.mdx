@@ -1,0 +1,96 @@
+---
+title: CollateralDebtData
+description: Struct containing comprehensive debt and collateral information for a credit account
+---
+
+The `CollateralDebtData` struct contains all debt and collateral information for a credit account, used during collateral checks and liquidations.
+
+## Struct Definition
+
+```solidity
+struct CollateralDebtData {
+    uint256 debt;
+    uint256 cumulativeIndexNow;
+    uint256 cumulativeIndexLastUpdate;
+    uint128 cumulativeQuotaInterest;
+    uint256 accruedInterest;
+    uint256 accruedFees;
+    uint256 totalDebtUSD;
+    uint256 totalValue;
+    uint256 totalValueUSD;
+    uint256 twvUSD;
+    uint256 enabledTokensMask;
+    uint256 quotedTokensMask;
+    address[] quotedTokens;
+    address _poolQuotaKeeper;
+}
+```
+
+## Fields
+
+<ParamField path="debt" type="uint256">
+  Current debt principal amount
+</ParamField>
+
+<ParamField path="cumulativeIndexNow" type="uint256">
+  Current cumulative base interest index in ray units
+</ParamField>
+
+<ParamField path="cumulativeIndexLastUpdate" type="uint256">
+  Cumulative base interest index at last debt update in ray units
+</ParamField>
+
+<ParamField path="cumulativeQuotaInterest" type="uint128">
+  Cumulative quota interest accrued by the account
+</ParamField>
+
+<ParamField path="accruedInterest" type="uint256">
+  Total accrued interest (base + quota)
+</ParamField>
+
+<ParamField path="accruedFees" type="uint256">
+  Total accrued fees (base + quota)
+</ParamField>
+
+<ParamField path="totalDebtUSD" type="uint256">
+  Total debt value in USD (debt + interest + fees)
+</ParamField>
+
+<ParamField path="totalValue" type="uint256">
+  Total value of account assets in underlying token units
+</ParamField>
+
+<ParamField path="totalValueUSD" type="uint256">
+  Total value of account assets in USD
+</ParamField>
+
+<ParamField path="twvUSD" type="uint256">
+  Total weighted value (TWV) in USD, calculated as sum of (collateral value * liquidation threshold)
+</ParamField>
+
+<ParamField path="enabledTokensMask" type="uint256">
+  Bitmask of tokens enabled as collateral on the account
+</ParamField>
+
+<ParamField path="quotedTokensMask" type="uint256">
+  Bitmask of tokens that have active quotas on the account
+</ParamField>
+
+<ParamField path="quotedTokens" type="address[]">
+  Array of token addresses with active quotas
+</ParamField>
+
+<ParamField path="_poolQuotaKeeper" type="address">
+  Address of the pool quota keeper (internal field)
+</ParamField>
+
+## Usage
+
+This struct is returned by `ICreditManagerV3.calcDebtAndCollateral()` and is used to:
+
+- Perform full collateral checks
+- Determine if an account is liquidatable
+- Calculate health factors
+- Process liquidations
+
+The health factor can be calculated as: `healthFactor = (twvUSD * 10000) / totalDebtUSD`

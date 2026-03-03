@@ -1,0 +1,272 @@
+---
+title: "CreditLogic"
+description: "Library for debt and repayment calculations in Gearbox Protocol"
+---
+
+## Overview
+
+The `CreditLogic` library implements core functions for debt management, interest calculations, and liquidation logic in Gearbox Protocol V3. It handles debt accrual, repayment waterfall mechanics, and liquidation payment distributions.
+
+## Key Features
+
+- Linear interest growth calculations
+- Debt increase and decrease with interest index management
+- Liquidation payment calculations with premium and fee handling
+- Dynamic liquidation threshold ramping
+- Multi-component debt repayment (quota fees → quota interest → base interest → principal)
+
+## Constants
+
+```solidity
+uint256 constant INDEX_PRECISION = 10 ** 9;
+```
+
+Precision used for interest index calculations.
+
+## Debt and Interest Functions
+
+### calcLinearGrowth
+
+```solidity
+function calcLinearGrowth(
+    uint256 value,
+    uint256 timestampLastUpdate
+) internal view returns (uint256)
+```
+
+Computes growth since last update given yearly growth rate.
+
+**Parameters:**
+- `value` - The yearly growth value
+- `timestampLastUpdate` - Timestamp of the last update
+
+**Returns:** Amount of growth since last update
+
+### calcAccruedInterest
+
+```solidity
+function calcAccruedInterest(
+    uint256 amount,
+    uint256 cumulativeIndexLastUpdate,
+    uint256 cumulativeIndexNow
+) internal pure returns (uint256)
+```
+
+Computes interest accrued since the last update using cumulative indices.
+
+**Parameters:**
+- `amount` - Principal amount
+- `cumulativeIndexLastUpdate` - Previous cumulative index
+- `cumulativeIndexNow` - Current cumulative index
+
+**Returns:** Accrued interest amount
+
+<Note>
+If the amount is zero, this function returns zero to avoid unnecessary calculations.
+</Note>
+
+### calcTotalDebt
+
+```solidity
+function calcTotalDebt(
+    CollateralDebtData memory collateralDebtData
+) internal pure returns (uint256)
+```
+
+Computes total debt including principal, accrued interest, and fees.
+
+**Parameters:**
+- `collateralDebtData` - Struct containing debt data (must have debt fields filled)
+
+**Returns:** Total debt = debt + accruedInterest + accruedFees
+
+## Debt Management
+
+### calcIncrease
+
+```solidity
+function calcIncrease(
+    uint256 amount,
+    uint256 debt,
+    uint256 cumulativeIndexNow,
+    uint256 cumulativeIndexLastUpdate
+) internal pure returns (
+    uint256 newDebt,
+    uint256 newCumulativeIndex
+)
+```
+
+Computes new debt principal and interest index after increasing debt.
+
+**Parameters:**
+- `amount` - Amount to increase debt by
+- `debt` - Current debt principal
+- `cumulativeIndexNow` - Current interest index
+- `cumulativeIndexLastUpdate` - Credit account's last interest index
+
+**Returns:**
+- `newDebt` - Updated debt principal (debt + amount)
+- `newCumulativeIndex` - New credit account interest index
+
+<Info>
+The new index is calculated to maintain the same accrued interest amount after the debt increase:
+`debt * (indexNow / indexLastUpdate - 1) = (debt + amount) * (indexNow / indexNew - 1)`
+</Info>
+
+### calcDecrease
+
+```solidity
+function calcDecrease(
+    uint256 amount,
+    uint256 debt,
+    uint256 cumulativeIndexNow,
+    uint256 cumulativeIndexLastUpdate,
+    uint128 cumulativeQuotaInterest,
+    uint128 quotaFees,
+    uint16 feeInterest
+) internal pure returns (
+    uint256 newDebt,
+    uint256 newCumulativeIndex,
+    uint256 profit,
+    uint128 newCumulativeQuotaInterest,
+    uint128 newQuotaFees
+)
+```
+
+Computes new debt values after repayment following the waterfall order.
+
+**Parameters:**
+- `amount` - Amount to repay
+- `debt` - Current debt principal
+- `cumulativeIndexNow` - Current interest index
+- `cumulativeIndexLastUpdate` - Credit account's last interest index
+- `cumulativeQuotaInterest` - Current quota interest
+- `quotaFees` - Accrued quota fees
+- `feeInterest` - DAO fee on interest (in basis points)
+
+**Returns:**
+- `newDebt` - Remaining debt principal
+- `newCumulativeIndex` - Updated interest index
+- `profit` - DAO fees collected
+- `newCumulativeQuotaInterest` - Remaining quota interest
+- `newQuotaFees` - Remaining quota fees
+
+<Warning>
+Debt components are repaid in strict order:
+1. Quota update fees
+2. Quota interest
+3. Base interest
+4. Debt principal
+
+Each component only decreases after the previous one is fully repaid.
+</Warning>
+
+## Liquidation Functions
+
+### calcLiquidationPayments
+
+```solidity
+function calcLiquidationPayments(
+    CollateralDebtData memory collateralDebtData,
+    uint16 feeLiquidation,
+    uint16 liquidationDiscount,
+    function (uint256) view returns (uint256) amountWithFeeFn,
+    function (uint256) view returns (uint256) amountMinusFeeFn
+) internal view returns (
+    uint256 amountToPool,
+    uint256 remainingFunds,
+    uint256 profit,
+    uint256 loss
+)
+```
+
+Computes distribution of funds during credit account liquidation.
+
+**Parameters:**
+- `collateralDebtData` - Collateral and debt data (both must be filled)
+- `feeLiquidation` - Liquidation fee charged by DAO (in basis points)
+- `liquidationDiscount` - Discount applied to collateral (= 1 - liquidation premium)
+- `amountWithFeeFn` - Function to calculate amount with fee added
+- `amountMinusFeeFn` - Function to calculate amount with fee deducted
+
+**Returns:**
+- `amountToPool` - Underlying tokens to send to the pool
+- `remainingFunds` - Underlying tokens to send to account owner
+- `profit` - DAO fees collected
+- `loss` - Unpaid debt (bad debt)
+
+<Info>
+Liquidation process:
+1. Apply liquidation premium and fee to total collateral value
+2. Use resulting funds to repay debt to the pool
+3. Return any excess to the account owner
+4. If funds insufficient, reduce protocol profits before reporting bad debt
+</Info>
+
+### getLiquidationThreshold
+
+```solidity
+function getLiquidationThreshold(
+    uint16 ltInitial,
+    uint16 ltFinal,
+    uint40 timestampRampStart,
+    uint24 rampDuration
+) internal view returns (uint16)
+```
+
+Returns the current liquidation threshold with support for dynamic ramping.
+
+**Parameters:**
+- `ltInitial` - Initial liquidation threshold
+- `ltFinal` - Final liquidation threshold
+- `timestampRampStart` - Timestamp when ramping begins
+- `rampDuration` - Duration of the ramp in seconds
+
+**Returns:** Current liquidation threshold (linearly interpolated during ramp)
+
+<Note>
+Gearbox V3 supports liquidation threshold ramping, allowing LT values to change linearly over time from `ltInitial` to `ltFinal`. To set a static LT, write the value to `ltInitial` with a ramp start far in the future.
+</Note>
+
+## Usage Example
+
+```solidity
+import {CreditLogic} from "@gearbox-protocol/core-v3/contracts/libraries/CreditLogic.sol";
+import {CollateralDebtData} from "@gearbox-protocol/core-v3/contracts/interfaces/ICreditManagerV3.sol";
+
+contract MyContract {
+    using CreditLogic for CollateralDebtData;
+
+    function calculateDebt(
+        CollateralDebtData memory data
+    ) external pure returns (uint256) {
+        return CreditLogic.calcTotalDebt(data);
+    }
+
+    function repayDebt(
+        uint256 amount,
+        uint256 debt,
+        uint256 indexNow,
+        uint256 indexLast,
+        uint128 quotaInterest,
+        uint128 quotaFees,
+        uint16 feeInterest
+    ) external pure returns (uint256 newDebt, uint256 profit) {
+        (newDebt,,profit,,) = CreditLogic.calcDecrease(
+            amount,
+            debt,
+            indexNow,
+            indexLast,
+            quotaInterest,
+            quotaFees,
+            feeInterest
+        );
+    }
+}
+```
+
+## Related Libraries
+
+- [QuotasLogic](/contracts/libraries/quotas-logic) - Quota interest calculations
+- [CollateralLogic](/contracts/libraries/collateral-logic) - Collateral valuation
+- [Constants](/contracts/libraries/constants) - Protocol constants

@@ -1,0 +1,389 @@
+---
+title: "Working with Adapters"
+description: "Learn how to use Gearbox adapters to interact with external DeFi protocols from credit accounts"
+---
+
+## Overview
+
+Adapters are smart contracts that allow credit accounts to interact with external DeFi protocols safely. Each adapter wraps a target contract and exposes whitelisted functions that can be called through multicalls.
+
+## Adapter Architecture
+
+### IAdapter Interface
+
+```solidity
+interface IAdapter {
+    /// @notice Credit manager this adapter is connected to
+    function creditManager() external view returns (address);
+    
+    /// @notice Target contract adapter helps to interact with
+    function targetContract() external view returns (address);
+}
+```
+
+Adapters implement:
+- Permissioned access control
+- Token enable/disable logic
+- Balance tracking for slippage protection
+- Safety checks for credit account operations
+
+## Finding Adapters
+
+Query the Credit Manager for adapter addresses:
+
+```solidity
+ICreditManagerV3 manager = ICreditManagerV3(creditManagerAddress);
+
+// Get adapter for a target contract
+address uniswapRouter = 0x...; // External protocol address
+address adapter = manager.contractToAdapter(uniswapRouter);
+
+// Get target contract from adapter
+address targetContract = manager.adapterToContract(adapter);
+```
+
+## Using Adapters in Multicalls
+
+<Steps>
+  <Step title="Identify Target Protocol">
+    Determine which external protocol you want to interact with:
+
+    ```solidity
+    address uniswapV3Router = 0xE592427A0AEce92De3Edee1F18E0157C05861564;
+    address adapter = manager.contractToAdapter(uniswapV3Router);
+    
+    require(adapter != address(0), "No adapter available");
+    ```
+  </Step>
+
+  <Step title="Encode Function Call">
+    Encode the adapter function you want to call:
+
+    ```solidity
+    // Example: Uniswap V3 exactInputSingle
+    ISwapRouter.ExactInputSingleParams memory params = ISwapRouter.ExactInputSingleParams({
+        tokenIn: tokenIn,
+        tokenOut: tokenOut,
+        fee: 3000,
+        recipient: creditAccount,
+        deadline: block.timestamp,
+        amountIn: amountIn,
+        amountOutMinimum: minAmountOut,
+        sqrtPriceLimitX96: 0
+    });
+    
+    bytes memory callData = abi.encodeWithSelector(
+        IUniswapV3Adapter.exactInputSingle.selector,
+        params
+    );
+    ```
+  </Step>
+
+  <Step title="Add to Multicall Array">
+    Include the adapter call in your multicall:
+
+    ```solidity
+    MultiCall[] memory calls = new MultiCall[](1);
+    
+    calls[0] = MultiCall({
+        target: adapter,
+        callData: callData
+    });
+    ```
+  </Step>
+
+  <Step title="Execute Multicall">
+    Send the multicall to the Credit Facade:
+
+    ```solidity
+    facade.multicall(creditAccount, calls);
+    ```
+  </Step>
+</Steps>
+
+## Adapter Execution Flow
+
+When an adapter is called:
+
+1. Credit Manager sets the credit account as active
+2. Adapter validates the call and prepares parameters
+3. Credit Manager executes the call to the target contract
+4. Adapter processes the result and updates token masks
+5. Credit Manager performs collateral check
+
+```solidity
+// Internal Credit Manager flow
+function execute(bytes calldata data) external returns (bytes memory result) {
+    // Called by adapter
+    address creditAccount = getActiveCreditAccountOrRevert();
+    
+    // Decode and execute external call
+    (address target, bytes memory callData) = abi.decode(data, (address, bytes));
+    result = externalCall(creditAccount, target, callData);
+}
+```
+
+## Token Management
+
+Adapters automatically manage enabled tokens:
+
+### Token Masks
+
+Tokens are tracked using bitmasks:
+
+```solidity
+uint256 enabledTokensMask = manager.enabledTokensMaskOf(creditAccount);
+
+// Get specific token mask
+address token = 0x...;
+uint256 tokenMask = manager.getTokenMaskOrRevert(token);
+
+// Check if token is enabled
+bool isEnabled = (enabledTokensMask & tokenMask) != 0;
+```
+
+### Automatic Token Enabling
+
+When an adapter call results in receiving a new token, it's automatically enabled:
+
+```solidity
+// Swap USDC -> WETH via adapter
+// WETH is automatically enabled as collateral after swap
+
+MultiCall[] memory calls = new MultiCall[](1);
+calls[0] = MultiCall({
+    target: uniswapAdapter,
+    callData: abi.encodeWithSelector(
+        IUniswapV3Adapter.exactInputSingle.selector,
+        // USDC -> WETH swap params
+    )
+});
+
+facade.multicall(creditAccount, calls);
+
+// WETH is now in enabledTokensMask
+```
+
+## Common Adapter Patterns
+
+### DEX Swaps
+
+Execute token swaps through DEX adapters:
+
+```solidity
+function swapTokens(
+    ICreditFacadeV3 facade,
+    address creditAccount,
+    address tokenIn,
+    address tokenOut,
+    uint256 amountIn,
+    uint256 minAmountOut
+) external {
+    ICreditManagerV3 manager = ICreditManagerV3(facade.creditManager());
+    address uniswapAdapter = manager.contractToAdapter(UNISWAP_V3_ROUTER);
+    
+    MultiCall[] memory calls = new MultiCall[](1);
+    
+    calls[0] = MultiCall({
+        target: uniswapAdapter,
+        callData: abi.encodeWithSelector(
+            IUniswapV3Adapter.exactInputSingle.selector,
+            ISwapRouter.ExactInputSingleParams({
+                tokenIn: tokenIn,
+                tokenOut: tokenOut,
+                fee: 3000,
+                recipient: creditAccount,
+                deadline: block.timestamp,
+                amountIn: amountIn,
+                amountOutMinimum: minAmountOut,
+                sqrtPriceLimitX96: 0
+            })
+        )
+    });
+    
+    facade.multicall(creditAccount, calls);
+}
+```
+
+### Lending Protocol Deposits
+
+Deposit collateral into lending protocols:
+
+```solidity
+// Example: Deposit to Compound-like protocol
+MultiCall[] memory calls = new MultiCall[](1);
+
+calls[0] = MultiCall({
+    target: compoundAdapter,
+    callData: abi.encodeWithSelector(
+        ICompoundAdapter.mint.selector,
+        depositAmount
+    )
+});
+
+facade.multicall(creditAccount, calls);
+```
+
+### Liquidity Pool Operations
+
+Add/remove liquidity from AMMs:
+
+```solidity
+// Add liquidity to Curve pool
+MultiCall[] memory calls = new MultiCall[](1);
+
+uint256[3] memory amounts = [amount0, amount1, amount2];
+
+calls[0] = MultiCall({
+    target: curveAdapter,
+    callData: abi.encodeWithSelector(
+        ICurveAdapter.add_liquidity.selector,
+        amounts,
+        minLPAmount
+    )
+});
+
+facade.multicall(creditAccount, calls);
+```
+
+## Slippage Protection
+
+Use balance tracking for slippage checks:
+
+```solidity
+MultiCall[] memory calls = new MultiCall[](3);
+
+// 1. Store expected balances before swap
+BalanceDelta[] memory deltas = new BalanceDelta[](2);
+deltas[0] = BalanceDelta({
+    token: tokenIn,
+    amount: -int256(amountIn) // Expecting decrease
+});
+deltas[1] = BalanceDelta({
+    token: tokenOut,
+    amount: int256(minAmountOut) // Expecting increase
+});
+
+calls[0] = MultiCall({
+    target: address(facade),
+    callData: abi.encodeCall(
+        ICreditFacadeV3Multicall.storeExpectedBalances,
+        (deltas)
+    )
+});
+
+// 2. Execute swap via adapter
+calls[1] = MultiCall({
+    target: uniswapAdapter,
+    callData: swapCallData
+});
+
+// 3. Compare balances to check slippage
+calls[2] = MultiCall({
+    target: address(facade),
+    callData: abi.encodeCall(
+        ICreditFacadeV3Multicall.compareBalances,
+        ()
+    )
+});
+
+facade.multicall(creditAccount, calls);
+```
+
+## Complex Multicall Example
+
+Combine multiple adapter calls in one transaction:
+
+```solidity
+MultiCall[] memory calls = new MultiCall[](4);
+
+// 1. Borrow more funds
+calls[0] = MultiCall({
+    target: address(facade),
+    callData: abi.encodeCall(
+        ICreditFacadeV3Multicall.increaseDebt,
+        (borrowAmount)
+    )
+});
+
+// 2. Swap USDC -> WETH
+calls[1] = MultiCall({
+    target: uniswapAdapter,
+    callData: abi.encodeWithSelector(
+        IUniswapV3Adapter.exactInputSingle.selector,
+        swapParams1
+    )
+});
+
+// 3. Swap WETH -> WBTC
+calls[2] = MultiCall({
+    target: uniswapAdapter,
+    callData: abi.encodeWithSelector(
+        IUniswapV3Adapter.exactInputSingle.selector,
+        swapParams2
+    )
+});
+
+// 4. Deposit WBTC to yield protocol
+calls[3] = MultiCall({
+    target: yieldAdapter,
+    callData: abi.encodeWithSelector(
+        IYieldAdapter.deposit.selector,
+        depositAmount
+    )
+});
+
+facade.multicall(creditAccount, calls);
+```
+
+## Adapter Permissions
+
+<Warning>
+  Adapter calls require `EXTERNAL_CALLS_PERMISSION`. This permission is automatically granted in most contexts, but may be restricted in certain scenarios.
+</Warning>
+
+Check if external calls are permitted:
+
+```solidity
+// Permission flags
+uint192 constant EXTERNAL_CALLS_PERMISSION = 1 << 16;
+
+// Adapters can only be called when this flag is set
+// in the current multicall context
+```
+
+## Approvals and Spending
+
+Adapters handle token approvals automatically:
+
+```solidity
+// Credit Manager approves tokens to target contract
+function approveCreditAccount(address token, uint256 amount) external {
+    // Called by adapter during execution
+    address creditAccount = getActiveCreditAccountOrRevert();
+    approveToken(creditAccount, token, targetContract, amount);
+}
+```
+
+You don't need to manually approve tokens when using adapters - the adapter handles this internally.
+
+## Safety Considerations
+
+<Note>
+  Adapters are developed by Gearbox DAO and are considered trusted. They implement safety checks to prevent:
+  - Token theft
+  - Unauthorized transfers
+  - Manipulation of credit account state
+  - Bypassing collateral checks
+</Note>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Opening Accounts" icon="folder-open" href="/guides/opening-credit-account">
+    Create accounts to use with adapters
+  </Card>
+  <Card title="Managing Debt" icon="coins" href="/guides/managing-debt">
+    Adjust leverage before adapter operations
+  </Card>
+</CardGroup>

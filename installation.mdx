@@ -1,0 +1,411 @@
+---
+title: "Installation"
+description: "Install Gearbox Protocol Core V3 contracts in your project"
+---
+
+## Overview
+
+Gearbox Protocol Core V3 can be installed in your project using npm for JavaScript/TypeScript projects, or directly via Foundry/Hardhat for Solidity development.
+
+<Note>
+  **Package Name**: `@gearbox-protocol/core-v3`
+  
+  **Current Version**: 1.0.1
+  
+  **Repository**: [Gearbox-protocol/core-v3](https://github.com/Gearbox-protocol/core-v3)
+</Note>
+
+## Installation Methods
+
+<CardGroup cols={3}>
+  <Card title="npm" icon="node">
+    For JavaScript/TypeScript projects
+  </Card>
+  <Card title="Foundry" icon="hammer">
+    For Foundry-based Solidity projects
+  </Card>
+  <Card title="Hardhat" icon="hard-hat">
+    For Hardhat-based Solidity projects
+  </Card>
+</CardGroup>
+
+### npm Installation
+
+Install the package via npm or yarn:
+
+<CodeGroup>
+
+```bash npm
+npm install @gearbox-protocol/core-v3
+```
+
+```bash yarn
+yarn add @gearbox-protocol/core-v3
+```
+
+```bash pnpm
+pnpm add @gearbox-protocol/core-v3
+```
+
+</CodeGroup>
+
+Then import interfaces in your TypeScript/JavaScript code:
+
+```typescript
+import { IPoolV3__factory } from '@gearbox-protocol/core-v3/types';
+import { ICreditFacadeV3__factory } from '@gearbox-protocol/core-v3/types';
+
+// Connect to contracts
+const pool = IPoolV3__factory.connect(poolAddress, signer);
+const creditFacade = ICreditFacadeV3__factory.connect(facadeAddress, signer);
+```
+
+### Foundry Installation
+
+For Foundry projects, install as a git submodule:
+
+```bash
+forge install Gearbox-protocol/core-v3
+```
+
+Then add the remapping to your `foundry.toml`:
+
+```toml foundry.toml
+[profile.default]
+src = 'contracts'
+out = 'out'
+libs = ['lib']
+remappings = [
+    '@gearbox-protocol/core-v3/=lib/core-v3/contracts/'
+]
+```
+
+Import contracts in your Solidity files:
+
+```solidity
+import "@gearbox-protocol/core-v3/interfaces/IPoolV3.sol";
+import "@gearbox-protocol/core-v3/interfaces/ICreditFacadeV3.sol";
+import "@gearbox-protocol/core-v3/interfaces/ICreditManagerV3.sol";
+```
+
+### Hardhat Installation
+
+First, install via npm:
+
+```bash
+npm install @gearbox-protocol/core-v3
+```
+
+Then configure Hardhat to recognize the package:
+
+```javascript hardhat.config.js
+module.exports = {
+  solidity: {
+    version: "0.8.23",
+    settings: {
+      optimizer: {
+        enabled: true,
+        runs: 1000
+      },
+      evmVersion: "shanghai"
+    }
+  },
+  paths: {
+    sources: "./contracts",
+    tests: "./test",
+    cache: "./cache",
+    artifacts: "./artifacts"
+  }
+};
+```
+
+Import in your Solidity contracts:
+
+```solidity
+import "@gearbox-protocol/core-v3/contracts/interfaces/IPoolV3.sol";
+import "@gearbox-protocol/core-v3/contracts/interfaces/ICreditFacadeV3.sol";
+import "@gearbox-protocol/core-v3/contracts/interfaces/ICreditManagerV3.sol";
+```
+
+## Compiler Configuration
+
+<Warning>
+  Gearbox Protocol Core V3 requires specific compiler settings for compatibility.
+</Warning>
+
+### Solidity Version
+
+Gearbox Protocol Core V3 contracts use Solidity `^0.8.17` and are compiled with version `0.8.23`:
+
+```solidity
+pragma solidity ^0.8.17;
+```
+
+### Recommended Compiler Settings
+
+For Foundry, use these settings in `foundry.toml`:
+
+```toml foundry.toml
+[profile.default]
+solc_version = '0.8.23'
+evm_version = 'shanghai'
+optimizer = true
+optimizer_runs = 1000
+bytecode_hash = 'none'
+```
+
+For Hardhat, configure `hardhat.config.js`:
+
+```javascript hardhat.config.js
+module.exports = {
+  solidity: {
+    version: "0.8.23",
+    settings: {
+      optimizer: {
+        enabled: true,
+        runs: 1000
+      },
+      evmVersion: "shanghai",
+      viaIR: false
+    }
+  }
+};
+```
+
+## Key Interfaces
+
+After installation, you'll have access to these core interfaces:
+
+<CodeGroup>
+
+```solidity Pool Interface
+import "@gearbox-protocol/core-v3/contracts/interfaces/IPoolV3.sol";
+
+contract MyContract {
+    IPoolV3 public pool;
+    
+    constructor(address poolAddress) {
+        pool = IPoolV3(poolAddress);
+    }
+    
+    function deposit(uint256 assets) external {
+        // Deposit to pool
+        pool.deposit(assets, msg.sender);
+    }
+}
+```
+
+```solidity Credit Facade Interface
+import "@gearbox-protocol/core-v3/contracts/interfaces/ICreditFacadeV3.sol";
+import "@gearbox-protocol/core-v3/contracts/interfaces/ICreditFacadeV3Multicall.sol";
+
+contract MyContract {
+    ICreditFacadeV3 public creditFacade;
+    
+    constructor(address facadeAddress) {
+        creditFacade = ICreditFacadeV3(facadeAddress);
+    }
+    
+    function openAccount(
+        address onBehalfOf,
+        MultiCall[] calldata calls
+    ) external returns (address) {
+        return creditFacade.openCreditAccount(
+            onBehalfOf,
+            calls,
+            0 // referral code
+        );
+    }
+}
+```
+
+```solidity Credit Manager Interface
+import "@gearbox-protocol/core-v3/contracts/interfaces/ICreditManagerV3.sol";
+
+contract MyContract {
+    ICreditManagerV3 public creditManager;
+    
+    constructor(address managerAddress) {
+        creditManager = ICreditManagerV3(managerAddress);
+    }
+    
+    function getAccountDebt(
+        address creditAccount
+    ) external view returns (uint256) {
+        (
+            uint256 debt,
+            ,,,,,
+            ,
+        ) = creditManager.creditAccountInfo(creditAccount);
+        return debt;
+    }
+}
+```
+
+```solidity Credit Account Interface
+import "@gearbox-protocol/core-v3/contracts/interfaces/ICreditAccountV3.sol";
+
+contract MyContract {
+    function getAccountManager(
+        address creditAccount
+    ) external view returns (address) {
+        return ICreditAccountV3(creditAccount).creditManager();
+    }
+}
+```
+
+</CodeGroup>
+
+## Dependencies
+
+Gearbox Protocol Core V3 depends on these external libraries:
+
+<Steps>
+  <Step title="OpenZeppelin Contracts">
+    Standard library for ERC20, ERC4626, and utility contracts.
+    
+    ```bash
+    npm install @openzeppelin/contracts
+    ```
+  </Step>
+  
+  <Step title="1inch Solidity Utils">
+    Utilities including SafeERC20 for secure token transfers.
+    
+    ```bash
+    npm install @1inch/solidity-utils
+    ```
+  </Step>
+</Steps>
+
+These dependencies are automatically installed when you install `@gearbox-protocol/core-v3` via npm.
+
+## Project Structure
+
+Once installed, the package contains:
+
+```
+@gearbox-protocol/core-v3/
+├── contracts/
+│   ├── interfaces/          # Contract interfaces
+│   │   ├── IPoolV3.sol
+│   │   ├── ICreditFacadeV3.sol
+│   │   ├── ICreditManagerV3.sol
+│   │   ├── ICreditAccountV3.sol
+│   │   └── base/            # Base interfaces
+│   ├── pool/                # Pool implementations
+│   │   ├── PoolV3.sol
+│   │   ├── PoolV3_USDT.sol
+│   │   ├── PoolQuotaKeeperV3.sol
+│   │   └── GaugeV3.sol
+│   ├── credit/              # Credit account implementations
+│   │   ├── CreditFacadeV3.sol
+│   │   ├── CreditManagerV3.sol
+│   │   └── CreditAccountV3.sol
+│   └── libraries/           # Utility libraries
+│       ├── CreditLogic.sol
+│       ├── CollateralLogic.sol
+│       ├── BalancesLogic.sol
+│       └── BitMask.sol
+└── package.json
+```
+
+## Verification
+
+Verify your installation by compiling a simple contract:
+
+```solidity TestInstallation.sol
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.17;
+
+import "@gearbox-protocol/core-v3/contracts/interfaces/IPoolV3.sol";
+import "@gearbox-protocol/core-v3/contracts/interfaces/ICreditFacadeV3.sol";
+
+contract TestInstallation {
+    IPoolV3 public pool;
+    ICreditFacadeV3 public creditFacade;
+    
+    constructor(
+        address poolAddress,
+        address facadeAddress
+    ) {
+        pool = IPoolV3(poolAddress);
+        creditFacade = ICreditFacadeV3(facadeAddress);
+    }
+    
+    function getPoolInfo() external view returns (
+        address underlying,
+        uint256 liquidity,
+        uint256 borrowed
+    ) {
+        underlying = pool.underlyingToken();
+        liquidity = pool.availableLiquidity();
+        borrowed = pool.totalBorrowed();
+    }
+}
+```
+
+Compile with Foundry:
+
+```bash
+forge build
+```
+
+Or with Hardhat:
+
+```bash
+npx hardhat compile
+```
+
+## License
+
+<Warning>
+  The primary license for Gearbox Protocol Core V3 is the **Business Source License 1.1 (BUSL-1.1)**. 
+  
+  Files that are NOT licensed under the BUSL-1.1 have appropriate SPDX headers.
+</Warning>
+
+Before using Gearbox Protocol in production, review the license terms in the [LICENSE file](https://github.com/Gearbox-protocol/core-v3/blob/main/LICENSE).
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Compiler version mismatch">
+    Ensure you're using Solidity `0.8.23` or a compatible version `^0.8.17`. Update your `foundry.toml` or `hardhat.config.js` accordingly.
+  </Accordion>
+  
+  <Accordion title="Import not found">
+    Verify your remappings in `foundry.toml` or ensure the package is properly installed via npm. Try running `forge remappings` to see current mappings.
+  </Accordion>
+  
+  <Accordion title="Optimizer settings">
+    Gearbox contracts are optimized for 1000 runs. Using different optimizer settings may cause issues. Match the recommended settings above.
+  </Accordion>
+  
+  <Accordion title="Missing dependencies">
+    Ensure OpenZeppelin and 1inch utilities are installed:
+    
+    ```bash
+    npm install @openzeppelin/contracts @1inch/solidity-utils
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card
+    title="Quickstart Guide"
+    icon="rocket"
+    href="/quickstart"
+  >
+    Learn how to interact with the contracts
+  </Card>
+  <Card
+    title="API Reference"
+    icon="code"
+    href="/api/credit-manager"
+  >
+    Explore the complete API documentation
+  </Card>
+</CardGroup>

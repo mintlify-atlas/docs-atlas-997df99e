@@ -1,0 +1,522 @@
+---
+title: AliasedLossPolicyV3
+description: Loss policy for liquidations with bad debt using alias price feeds for double-checking liquidation decisions
+---
+
+## Overview
+
+AliasedLossPolicyV3 is a loss policy that allows double-checking liquidation decisions for credit accounts with bad debt using alias price feeds. This is useful when a token's market price temporarily drops while its fundamental value remains stable.
+
+**Contract Type:** `LOSS_POLICY::ALIASED`
+
+**Version:** 3.10
+
+**Source:** [AliasedLossPolicyV3.sol](https://github.com/Gearbox-protocol/core-v3/blob/main/contracts/core/AliasedLossPolicyV3.sol)
+
+## Key Features
+
+### Alias Price Feeds
+
+For quoted tokens, the policy can configure "alias" price feeds that provide alternative pricing:
+- Main price feeds use market prices (e.g., Chainlink)
+- Alias price feeds use fundamental values (e.g., redemption rates, NAV)
+- The policy recalculates TWV using alias prices to determine if liquidation should proceed
+
+### Access Control
+
+The policy supports three access modes for loss liquidations:
+- **Permissionless**: Anyone can liquidate with loss
+- **Permissioned**: Only accounts with `LOSS_LIQUIDATOR` role can liquidate
+- **Forbidden**: No loss liquidations allowed
+
+### Optional Checks
+
+Policy checks can be disabled entirely, allowing liquidations to proceed without alias price verification. This provides a fallback in case alias price feeds become unavailable.
+
+## Immutable Properties
+
+### pool
+
+```solidity
+address public immutable pool
+```
+
+The pool for which this loss policy applies.
+
+### underlying
+
+```solidity
+address public immutable underlying
+```
+
+The pool's underlying token.
+
+### priceFeedStore
+
+```solidity
+address public immutable priceFeedStore
+```
+
+Address of the price feed store used for alias price updates.
+
+## Core Functions
+
+### isLiquidatableWithLoss
+
+```solidity
+function isLiquidatableWithLoss(
+    address creditAccount,
+    address caller,
+    Params calldata params
+) external returns (bool)
+```
+
+Determines whether a credit account can be liquidated with loss by the caller.
+
+<ParamField path="creditAccount" type="address">
+  Credit account to check for liquidation
+</ParamField>
+
+<ParamField path="caller" type="address">
+  Address attempting to liquidate
+</ParamField>
+
+<ParamField path="params" type="Params">
+  Liquidation parameters including TWV, debt, and optional price updates
+</ParamField>
+
+**Returns:** `true` if liquidation with loss should proceed
+
+**Logic Flow:**
+1. Check access mode - return `false` if Forbidden
+2. Check caller permissions - return `false` if Permissioned mode and caller lacks role
+3. If checks disabled, return `true`
+4. Update prices if price update data provided
+5. Recalculate TWV using alias prices
+6. Return `true` if adjusted TWV < total debt
+
+**Example:**
+```solidity
+ILossPolicy.Params memory params = ILossPolicy.Params({
+    twvUSD: 95000e8,      // Current TWV in USD
+    totalDebtUSD: 100000e8, // Total debt in USD
+    extraData: priceUpdateData // Optional price updates
+});
+
+bool canLiquidate = IAliasedLossPolicyV3(policy).isLiquidatableWithLoss(
+    creditAccount,
+    msg.sender,
+    params
+);
+```
+
+### getRequiredAliasPriceFeeds
+
+```solidity
+function getRequiredAliasPriceFeeds(address creditAccount)
+    external
+    view
+    returns (address[] memory priceFeeds)
+```
+
+Returns the list of alias price feeds that must return valid prices to liquidate the account.
+
+<ParamField path="creditAccount" type="address">
+  Credit account to check
+</ParamField>
+
+**Returns:** Array of alias price feed addresses for tokens enabled in the account
+
+**Example:**
+```solidity
+address[] memory required = IAliasedLossPolicyV3(policy)
+    .getRequiredAliasPriceFeeds(creditAccount);
+
+// Ensure all required price feeds are updated
+for (uint256 i = 0; i < required.length; i++) {
+    // Check or update price feed
+}
+```
+
+## View Functions
+
+### serialize
+
+```solidity
+function serialize() external view returns (bytes memory)
+```
+
+Serializes the loss policy state including access mode, checks status, and alias price feed configurations.
+
+**Returns:** ABI-encoded state data
+
+### getTokensWithAlias
+
+```solidity
+function getTokensWithAlias() external view returns (address[] memory)
+```
+
+Returns all tokens that have alias price feeds configured.
+
+**Example:**
+```solidity
+address[] memory tokens = IAliasedLossPolicyV3(policy).getTokensWithAlias();
+for (uint256 i = 0; i < tokens.length; i++) {
+    PriceFeedParams memory params = policy.getAliasPriceFeedParams(tokens[i]);
+    // Process alias configuration
+}
+```
+
+### getAliasPriceFeedParams
+
+```solidity
+function getAliasPriceFeedParams(address token)
+    external
+    view
+    returns (PriceFeedParams memory)
+```
+
+Returns the alias price feed parameters for a specific token.
+
+<ParamField path="token" type="address">
+  Token address to query
+</ParamField>
+
+**Returns:** `PriceFeedParams` struct containing:
+- `priceFeed`: Alias price feed address
+- `stalenessPeriod`: Period after which price is stale
+- `skipCheck`: Whether feed implements own checks
+- `tokenDecimals`: Token decimals
+
+### accessMode
+
+```solidity
+AccessMode public accessMode
+```
+
+Current access mode for loss liquidations. Returns one of:
+- `AccessMode.Permissionless`
+- `AccessMode.Permissioned`
+- `AccessMode.Forbidden`
+
+### checksEnabled
+
+```solidity
+bool public checksEnabled
+```
+
+Whether alias price checks are enabled.
+
+## Configuration Functions
+
+### setAccessMode
+
+```solidity
+function setAccessMode(AccessMode mode) external
+```
+
+Sets the access mode for loss liquidations.
+
+<ParamField path="mode" type="AccessMode">
+  New access mode (Permissionless, Permissioned, or Forbidden)
+</ParamField>
+
+**Access:** Only callable by configurator
+
+**Emits:** `SetAccessMode(mode)`
+
+**Example:**
+```solidity
+// Restrict loss liquidations to authorized liquidators
+IAliasedLossPolicyV3(policy).setAccessMode(
+    AccessMode.Permissioned
+);
+```
+
+### setChecksEnabled
+
+```solidity
+function setChecksEnabled(bool enabled) external
+```
+
+Enables or disables alias price checks.
+
+<ParamField path="enabled" type="bool">
+  Whether to enable checks
+</ParamField>
+
+**Access:** Only callable by configurator
+
+**Emits:** `SetChecksEnabled(enabled)`
+
+<Warning>
+Disabling checks allows liquidations to proceed without alias price verification. Use with caution.
+</Warning>
+
+**Example:**
+```solidity
+// Disable checks temporarily if alias feeds are unavailable
+IAliasedLossPolicyV3(policy).setChecksEnabled(false);
+```
+
+### setAliasPriceFeed
+
+```solidity
+function setAliasPriceFeed(address token, address priceFeed) external
+```
+
+Sets or unsets an alias price feed for a token.
+
+<ParamField path="token" type="address">
+  Token address (must be a quoted token in the pool)
+</ParamField>
+
+<ParamField path="priceFeed" type="address">
+  Alias price feed address (use zero address to unset)
+</ParamField>
+
+**Access:** Only callable by configurator
+
+**Reverts:**
+- `TokenIsNotQuotedException` if token is not quoted in the pool
+- If price feed is not known to the price feed store
+
+**Emits:**
+- `SetAliasPriceFeed(token, priceFeed, stalenessPeriod, skipCheck)` when setting
+- `UnsetAliasPriceFeed(token)` when unsetting
+
+<Note>
+The price feed must be registered in the price feed store before it can be used as an alias.
+</Note>
+
+**Example:**
+```solidity
+// Set redemption rate oracle as alias for staked token
+IAliasedLossPolicyV3(policy).setAliasPriceFeed(
+    stETH,
+    stETHRedemptionRateOracle
+);
+
+// Unset alias price feed
+IAliasedLossPolicyV3(policy).setAliasPriceFeed(
+    stETH,
+    address(0)
+);
+```
+
+## Price Update System
+
+### Updating Prices
+
+Before checking if a liquidation with loss should proceed, the liquidator can provide price updates for alias feeds:
+
+```solidity
+// Prepare price updates
+PriceUpdate[] memory updates = new PriceUpdate[](1);
+updates[0] = PriceUpdate({
+    priceFeed: aliasPriceFeed,
+    data: priceUpdateData  // Feed-specific update data
+});
+
+bytes memory extraData = abi.encode(updates);
+
+// Check liquidation with updated prices
+ILossPolicy.Params memory params = ILossPolicy.Params({
+    twvUSD: twv,
+    totalDebtUSD: debt,
+    extraData: extraData
+});
+
+bool canLiquidate = policy.isLiquidatableWithLoss(
+    account,
+    msg.sender,
+    params
+);
+```
+
+## How Alias Pricing Works
+
+### TWV Adjustment Algorithm
+
+The policy adjusts the total weighted value (TWV) by:
+
+1. **Iterate enabled tokens** in the credit account (excluding underlying)
+2. **For each token with alias price feed:**
+   - Calculate weighted value using alias price: `valueAlias = min(balanceUSD_alias * LT, quota)`
+   - Calculate weighted value using normal price: `valueNormal = min(balanceUSD_normal * LT, quota)`
+   - Adjust TWV: `twvAdjusted += valueAlias - valueNormal`
+3. **Compare adjusted TWV to debt** to determine if liquidation should proceed
+
+### Example Scenario
+
+Consider a credit account with:
+- Debt: 100,000 USD
+- Collateral: 10,000 stETH
+- Market price (main feed): $9.50 per stETH
+- Redemption rate (alias feed): $9.80 per stETH
+- Liquidation threshold: 90%
+
+**Without alias pricing:**
+- TWV = 10,000 × $9.50 × 90% = $85,500
+- TWV < Debt → Liquidate with loss ✓
+
+**With alias pricing:**
+- TWV (alias) = 10,000 × $9.80 × 90% = $88,200
+- TWV < Debt → Still liquidate, but with more accurate pricing
+
+If the alias price shows TWV > Debt, the liquidation would be prevented, protecting against false liquidations due to temporary price drops.
+
+## Structs and Enums
+
+### AccessMode
+
+```solidity
+enum AccessMode {
+    Permissionless,  // Anyone can liquidate
+    Permissioned,    // Only LOSS_LIQUIDATOR role
+    Forbidden        // No loss liquidations
+}
+```
+
+### Params (from ILossPolicy)
+
+```solidity
+struct Params {
+    uint256 twvUSD;        // Total weighted value in USD
+    uint256 totalDebtUSD;  // Total debt in USD
+    bytes extraData;       // Price update data
+}
+```
+
+### PriceUpdate
+
+```solidity
+struct PriceUpdate {
+    address priceFeed;  // Price feed to update
+    bytes data;         // Update data for the feed
+}
+```
+
+## Events
+
+### SetAliasPriceFeed
+
+```solidity
+event SetAliasPriceFeed(
+    address indexed token,
+    address indexed priceFeed,
+    uint32 stalenessPeriod,
+    bool skipCheck
+)
+```
+
+Emitted when an alias price feed is set for a token.
+
+### UnsetAliasPriceFeed
+
+```solidity
+event UnsetAliasPriceFeed(address indexed token)
+```
+
+Emitted when an alias price feed is unset for a token.
+
+### SetAccessMode
+
+```solidity
+event SetAccessMode(AccessMode mode)
+```
+
+Emitted when the access mode changes.
+
+### SetChecksEnabled
+
+```solidity
+event SetChecksEnabled(bool enabled)
+```
+
+Emitted when checks are enabled or disabled.
+
+## Use Cases
+
+### Staked Assets
+
+For tokens like stETH or rETH:
+- Main feed: Market price (may depeg temporarily)
+- Alias feed: Redemption rate (fundamental value)
+- Prevents liquidations during temporary depegs
+
+### Yield-Bearing Tokens
+
+For tokens like aTokens or cTokens:
+- Main feed: Market price
+- Alias feed: Underlying + accrued interest
+- Ensures accurate valuation of yield positions
+
+### LP Tokens
+
+For liquidity pool tokens:
+- Main feed: Market price (may be manipulated)
+- Alias feed: NAV from reserves
+- Protects against price manipulation
+
+## Integration Example
+
+```solidity
+// 1. Configure alias price feed for stETH
+IAliasedLossPolicyV3 policy = IAliasedLossPolicyV3(policyAddress);
+policy.setAliasPriceFeed(stETH, stETHRedemptionOracle);
+
+// 2. Set permissioned mode
+policy.setAccessMode(AccessMode.Permissioned);
+
+// 3. When liquidating with loss:
+address[] memory requiredFeeds = policy.getRequiredAliasPriceFeeds(
+    creditAccount
+);
+
+// 4. Prepare price updates for required feeds
+PriceUpdate[] memory updates = new PriceUpdate[](requiredFeeds.length);
+for (uint256 i = 0; i < requiredFeeds.length; i++) {
+    updates[i] = PriceUpdate({
+        priceFeed: requiredFeeds[i],
+        data: getPriceUpdateData(requiredFeeds[i])
+    });
+}
+
+// 5. Check if liquidation should proceed
+ILossPolicy.Params memory params = ILossPolicy.Params({
+    twvUSD: computedTWV,
+    totalDebtUSD: totalDebt,
+    extraData: abi.encode(updates)
+});
+
+bool shouldLiquidate = policy.isLiquidatableWithLoss(
+    creditAccount,
+    msg.sender,
+    params
+);
+
+if (shouldLiquidate) {
+    // Proceed with loss liquidation
+}
+```
+
+## Security Considerations
+
+### Price Feed Security
+
+- Alias price feeds must be as secure as main price feeds
+- Staleness checks apply to alias feeds
+- Price feeds should be validated before being set as aliases
+
+### Access Control
+
+- Use Permissioned mode for sensitive markets
+- LOSS_LIQUIDATOR role should be granted carefully
+- Monitor liquidations with bad debt closely
+
+### Emergency Controls
+
+- `checksEnabled` can be disabled if alias feeds fail
+- Access mode can be changed to Forbidden in emergencies
+- Configurator role is required for all configuration changes

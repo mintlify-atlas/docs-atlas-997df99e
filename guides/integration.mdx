@@ -1,0 +1,176 @@
+---
+title: "Integrating Gearbox Protocol"
+description: "Learn how to integrate Gearbox Protocol Core V3 into your DeFi application for onchain credit and composable leverage"
+---
+
+## Overview
+
+Gearbox Protocol Core V3 provides onchain credit and composable leverage for DeFi protocols. The integration involves interacting with three main components:
+
+- **Credit Facade** - User-facing interface for account management and multicalls
+- **Credit Manager** - Core logic for debt, collateral, and account state
+- **Price Oracle** - Price feeds for collateral valuation
+
+## Core Components
+
+### Credit Facade
+
+The `ICreditFacadeV3` interface is the primary entry point for users:
+
+```solidity
+interface ICreditFacadeV3 {
+    function creditManager() external view returns (address);
+    function underlying() external view returns (address);
+    function debtLimits() external view returns (uint128 minDebt, uint128 maxDebt);
+    
+    function openCreditAccount(
+        address onBehalfOf,
+        MultiCall[] calldata calls,
+        uint256 referralCode
+    ) external payable returns (address creditAccount);
+    
+    function multicall(
+        address creditAccount,
+        MultiCall[] calldata calls
+    ) external payable;
+    
+    function closeCreditAccount(
+        address creditAccount,
+        MultiCall[] calldata calls
+    ) external payable;
+}
+```
+
+### MultiCall Structure
+
+All account operations use the `MultiCall` pattern for batched execution:
+
+```solidity
+struct MultiCall {
+    address target;  // Credit facade or adapter address
+    bytes callData;  // Encoded function call
+}
+```
+
+## Integration Steps
+
+<Steps>
+  <Step title="Get Contract Addresses">
+    Query the Credit Facade and Manager addresses from Gearbox's contracts registry:
+
+    ```solidity
+    address creditFacade = 0x...; // Get from registry
+    ICreditFacadeV3 facade = ICreditFacadeV3(creditFacade);
+    
+    address creditManager = facade.creditManager();
+    address underlying = facade.underlying();
+    (uint128 minDebt, uint128 maxDebt) = facade.debtLimits();
+    ```
+  </Step>
+
+  <Step title="Prepare Token Approvals">
+    Approve the Credit Manager to spend tokens that will be added as collateral:
+
+    ```solidity
+    IERC20(underlying).approve(creditManager, amount);
+    ```
+  </Step>
+
+  <Step title="Build MultiCall Array">
+    Construct operations for account initialization:
+
+    ```solidity
+    MultiCall[] memory calls = new MultiCall[](2);
+    
+    // Add collateral
+    calls[0] = MultiCall({
+        target: creditFacade,
+        callData: abi.encodeCall(
+            ICreditFacadeV3Multicall.addCollateral,
+            (underlying, collateralAmount)
+        )
+    });
+    
+    // Increase debt
+    calls[1] = MultiCall({
+        target: creditFacade,
+        callData: abi.encodeCall(
+            ICreditFacadeV3Multicall.increaseDebt,
+            (borrowAmount)
+        )
+    });
+    ```
+  </Step>
+
+  <Step title="Execute Integration">
+    Open account or execute multicall:
+
+    ```solidity
+    // Open new account
+    address creditAccount = facade.openCreditAccount(
+        msg.sender,
+        calls,
+        0 // referralCode
+    );
+    
+    // Or execute on existing account
+    facade.multicall(creditAccount, calls);
+    ```
+  </Step>
+</Steps>
+
+## Reading Account State
+
+Query account information using the Credit Manager:
+
+```solidity
+ICreditManagerV3 manager = ICreditManagerV3(creditManager);
+
+// Get full account info
+(
+    uint256 debt,
+    uint256 cumulativeIndexLastUpdate,
+    uint128 cumulativeQuotaInterest,
+    uint128 quotaFees,
+    uint256 enabledTokensMask,
+    uint16 flags,
+    uint64 lastDebtUpdate,
+    address borrower
+) = manager.creditAccountInfo(creditAccount);
+
+// Get debt and collateral data
+CollateralDebtData memory data = manager.calcDebtAndCollateral(
+    creditAccount,
+    CollateralCalcTask.DEBT_COLLATERAL
+);
+```
+
+## Error Handling
+
+<Warning>
+  All operations perform collateral checks at the end of execution. Ensure your multicalls maintain sufficient health factor (at least 10000 bps = 100%).
+</Warning>
+
+Common revert reasons:
+
+- **Insufficient collateral** - Health factor below minimum after operations
+- **Debt limits violated** - Debt outside `[minDebt, maxDebt]` range
+- **Forbidden tokens** - Attempting to increase debt or withdraw with forbidden tokens enabled
+- **Debt update in same block** - Cannot update debt twice in the same block
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Opening Credit Accounts" icon="folder-open" href="/guides/opening-credit-account">
+    Learn the complete flow for opening accounts
+  </Card>
+  <Card title="Managing Debt" icon="coins" href="/guides/managing-debt">
+    Increase and decrease debt on accounts
+  </Card>
+  <Card title="Working with Adapters" icon="plug" href="/guides/working-with-adapters">
+    Interact with external protocols via adapters
+  </Card>
+  <Card title="Price Oracles" icon="chart-line" href="/guides/price-oracles">
+    Understand price feed integration
+  </Card>
+</CardGroup>

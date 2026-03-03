@@ -1,0 +1,158 @@
+---
+title: "Gearbox Protocol Core V3"
+description: "Onchain credit and composable leverage for DeFi - bringing 10X leverage to Uniswap, Curve, Lido, and beyond"
+---
+
+## What is Gearbox Protocol?
+
+Gearbox Protocol brings you **onchain credit**, allowing anyone to margin trade on Uniswap, leverage farm on Curve, leverage stake on Lido, and use 10X more capital on many DeFi protocols you love, as well as RWAs & NFTs. Making decentralized leverage a reality thanks to Credit Account abstraction.
+
+Gearbox Protocol uses Credit Account abstraction to bring together lending and prime brokerage in the same protocol. Lenders deposit assets to earn passive yield, while the composable leverage side users borrow these assets to create spot leverage positions, which can be used across DeFi.
+
+<CardGroup cols={2}>
+  <Card
+    title="Quickstart"
+    icon="rocket"
+    href="/quickstart"
+  >
+    Get started with Gearbox Protocol in minutes
+  </Card>
+  <Card
+    title="Installation"
+    icon="download"
+    href="/installation"
+  >
+    Install the contracts via npm, Foundry, or Hardhat
+  </Card>
+  <Card
+    title="Credit Accounts"
+    icon="wallet"
+    href="/concepts/credit-accounts"
+  >
+    Learn about Credit Account abstraction
+  </Card>
+  <Card
+    title="API Reference"
+    icon="code"
+    href="/api/credit-manager"
+  >
+    Explore the contract interfaces and methods
+  </Card>
+</CardGroup>
+
+## Core Features
+
+### Credit Account Abstraction
+
+Credit Accounts are the foundation of Gearbox Protocol. They are isolated smart contract accounts that hold user collateral and borrowed funds, enabling composable leverage across multiple DeFi protocols while maintaining risk isolation.
+
+### Multicall Operations
+
+Execute multiple operations in a single transaction with automatic collateral checking:
+
+- Open leveraged positions across DeFi
+- Manage debt and collateral
+- Interact with external protocols via adapters
+- Batch operations for gas efficiency
+
+### ERC-4626 Lending Pools
+
+Gearbox V3 pools implement the ERC-4626 standard, providing:
+
+- Standardized deposit and withdrawal interfaces
+- Automatic yield accrual from interest and fees
+- EIP-2612 permit support for gasless approvals
+- Flexible liquidity provision
+
+### Flexible Liquidations
+
+Two liquidation mechanisms protect lenders:
+
+- **Full Liquidation**: Liquidate entire positions when health factor drops
+- **Partial Liquidation**: Repay specific debt amounts for discounted collateral
+
+## Protocol Architecture
+
+The protocol consists of several key components:
+
+<Steps>
+  <Step title="Pools (PoolV3)">
+    ERC-4626 compliant lending pools where lenders deposit assets to earn yield. Pools manage liquidity, interest rates, and provide funds to credit managers.
+  </Step>
+  
+  <Step title="Credit Manager (CreditManagerV3)">
+    Core contract that manages credit accounts, handles collateral calculations, debt accounting, and liquidations. Each credit manager is connected to one pool.
+  </Step>
+  
+  <Step title="Credit Facade (CreditFacadeV3)">
+    User-facing interface for opening, closing, and managing credit accounts. Implements multicall functionality and safety checks.
+  </Step>
+  
+  <Step title="Credit Accounts (CreditAccountV3)">
+    Isolated smart contract wallets that hold user collateral and borrowed funds. Each user can have one credit account per credit manager.
+  </Step>
+</Steps>
+
+## Use Cases
+
+<CardGroup cols={2}>
+  <Card title="Margin Trading" icon="chart-line">
+    Trade with leverage on Uniswap and other DEXes
+  </Card>
+  <Card title="Leverage Farming" icon="seedling">
+    Farm with leveraged positions on Curve and Balancer
+  </Card>
+  <Card title="Leverage Staking" icon="coins">
+    Stake with leverage on Lido and Rocketpool
+  </Card>
+  <Card title="Composable Strategies" icon="layer-group">
+    Create complex multi-protocol strategies
+  </Card>
+</CardGroup>
+
+## Smart Contract Information
+
+<Note>
+  **Package**: `@gearbox-protocol/core-v3`
+  
+  **Version**: 1.0.1
+  
+  **License**: BUSL-1.1
+  
+  **Solidity**: ^0.8.17
+</Note>
+
+## Security & Audits
+
+Gearbox Protocol has undergone multiple security audits. For detailed information about audits and security practices, visit the [Gearbox dev portal](https://dev.gearbox.fi).
+
+<Warning>
+  The primary license for Gearbox Protocol Core V3 is the Business Source License 1.1 (BUSL-1.1). Files that are NOT licensed under the BUSL-1.1 have appropriate SPDX headers.
+</Warning>
+
+## Resources
+
+- [Official Website](https://gearbox.fi)
+- [General Documentation](https://docs.gearbox.fi)
+- [Developer Portal](https://dev.gearbox.fi)
+- [GitHub Repository](https://github.com/Gearbox-protocol/core-v3)
+- [Gearbox V3 Blog Post](https://blog.gearbox.fi/gearbox-protocol-v3-the-onchain-credit-layer/)
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card
+    title="Start Building"
+    icon="hammer"
+    href="/quickstart"
+  >
+    Follow the quickstart guide to integrate Gearbox
+  </Card>
+  <Card
+    title="Explore Contracts"
+    icon="file-code"
+    href="/contracts/credit/credit-manager"
+  >
+    Dive into the contract interfaces
+  </Card>
+</CardGroup>

@@ -1,0 +1,386 @@
+---
+title: BotListV3
+description: Permission management system for bots to perform automated actions on credit accounts
+---
+
+## Overview
+
+BotListV3 manages bot permissions for credit accounts, storing bit masks that dictate which actions bots can perform during multicall operations. Each bot can have different permissions for different credit accounts.
+
+**Contract Type:** `BOT_LIST`
+
+**Version:** 3.10
+
+**Source:** [BotListV3.sol](https://github.com/Gearbox-protocol/core-v3/blob/main/contracts/core/BotListV3.sol)
+
+## Key Features
+
+### Granular Permissions
+
+Bot permissions are stored as 192-bit masks, allowing fine-grained control over which actions each bot can perform on each credit account.
+
+### Per-Account Permissions
+
+Permissions are set per credit account, not globally. This allows:
+- Users to grant different permissions to the same bot across their accounts
+- Different permission levels for different accounts
+- Account-specific automation strategies
+
+### Active Bot Tracking
+
+The contract maintains a set of all bots with non-zero permissions for each account, enabling efficient permission management and lookups.
+
+### Bot Forbidding
+
+The DAO can forbid specific bots, preventing them from receiving any new permissions while preserving the ability to remove existing permissions.
+
+## Core Functions
+
+### Permission Queries
+
+#### botPermissions
+
+```solidity
+function botPermissions(address bot, address creditAccount)
+    external
+    view
+    returns (uint192)
+```
+
+Returns the bot's permission bit mask for a specific credit account.
+
+<ParamField path="bot" type="address">
+  Bot address to query
+</ParamField>
+
+<ParamField path="creditAccount" type="address">
+  Credit account address
+</ParamField>
+
+**Returns:** 192-bit permission mask
+
+**Example:**
+```solidity
+uint192 permissions = botList.botPermissions(botAddress, accountAddress);
+if (permissions != 0) {
+    // Bot has some permissions for this account
+}
+```
+
+#### activeBots
+
+```solidity
+function activeBots(address creditAccount)
+    external
+    view
+    returns (address[] memory)
+```
+
+Returns all bots with non-zero permissions for a credit account.
+
+<ParamField path="creditAccount" type="address">
+  Credit account address
+</ParamField>
+
+**Returns:** Array of bot addresses
+
+**Example:**
+```solidity
+address[] memory bots = botList.activeBots(accountAddress);
+for (uint256 i = 0; i < bots.length; i++) {
+    // Process each active bot
+}
+```
+
+#### getBotStatus
+
+```solidity
+function getBotStatus(address bot, address creditAccount)
+    external
+    view
+    returns (uint192 permissions, bool forbidden)
+```
+
+Returns both the bot's permissions and its forbidden status.
+
+<ParamField path="bot" type="address">
+  Bot address to query
+</ParamField>
+
+<ParamField path="creditAccount" type="address">
+  Credit account address
+</ParamField>
+
+**Returns:**
+- `permissions`: Bot's permission bit mask (0 if forbidden)
+- `forbidden`: Whether the bot is forbidden
+
+**Example:**
+```solidity
+(uint192 permissions, bool forbidden) = botList.getBotStatus(bot, account);
+if (forbidden) {
+    // Bot is forbidden, cannot add new permissions
+}
+```
+
+### Permission Management
+
+#### setBotPermissions
+
+```solidity
+function setBotPermissions(
+    address bot,
+    address creditAccount,
+    uint192 permissions
+) external returns (uint256 activeBotsRemaining)
+```
+
+Sets the bot's permissions for a specific credit account.
+
+<ParamField path="bot" type="address">
+  Bot address (must be non-zero)
+</ParamField>
+
+<ParamField path="creditAccount" type="address">
+  Credit account address
+</ParamField>
+
+<ParamField path="permissions" type="uint192">
+  Permission bit mask to set (0 to revoke all permissions)
+</ParamField>
+
+**Returns:** Number of bots with non-zero permissions remaining after the update
+
+**Access:** Only callable by credit facade connected to the credit account's manager
+
+**Reverts:**
+- `IncorrectBotPermissionsException` if permissions don't match bot's required permissions
+- `InvalidBotException` if trying to set non-zero permissions for a forbidden bot
+- `TooManyActiveBotsException` if exceeding maximum active bots limit
+
+**Emits:** `SetBotPermissions(bot, creditManager, creditAccount, permissions)`
+
+<Note>
+When setting non-zero permissions, they must exactly match the bot's `requiredPermissions()` value.
+</Note>
+
+**Example:**
+```solidity
+// Grant bot permissions
+uint192 requiredPerms = IBot(bot).requiredPermissions();
+uint256 activeBots = botList.setBotPermissions(
+    bot,
+    creditAccount,
+    requiredPerms
+);
+
+// Revoke bot permissions
+botList.setBotPermissions(bot, creditAccount, 0);
+```
+
+#### eraseAllBotPermissions
+
+```solidity
+function eraseAllBotPermissions(address creditAccount) external
+```
+
+Removes all bot permissions for a credit account.
+
+<ParamField path="creditAccount" type="address">
+  Credit account to clear permissions for
+</ParamField>
+
+**Access:** Only callable by credit facade connected to the credit account's manager
+
+**Emits:** `SetBotPermissions` event for each bot with zeroed permissions
+
+**Example:**
+```solidity
+// Revoke all bot permissions when closing account
+botList.eraseAllBotPermissions(creditAccount);
+```
+
+## Configuration Functions
+
+### botForbiddenStatus
+
+```solidity
+function botForbiddenStatus(address bot)
+    external
+    view
+    returns (bool)
+```
+
+Returns whether a bot is currently forbidden.
+
+<ParamField path="bot" type="address">
+  Bot address to check
+</ParamField>
+
+**Returns:** True if bot is forbidden
+
+### forbidBot
+
+```solidity
+function forbidBot(address bot) external
+```
+
+Forbids a bot, preventing it from receiving new permissions.
+
+<ParamField path="bot" type="address">
+  Bot address to forbid
+</ParamField>
+
+**Access:** Only callable by owner (Instance Manager)
+
+**Emits:** `ForbidBot(bot)`
+
+<Warning>
+Forbidding a bot does not automatically remove its existing permissions. Users must manually revoke permissions from forbidden bots.
+</Warning>
+
+**Example:**
+```solidity
+// Forbid a malicious or buggy bot
+botList.forbidBot(problematicBot);
+```
+
+## Structures
+
+### BotInfo
+
+```solidity
+struct BotInfo {
+    bool forbidden;
+    mapping(address => mapping(address => uint192)) permissions;
+}
+```
+
+Stores bot information:
+- `forbidden`: Whether the bot is forbidden from receiving new permissions
+- `permissions`: Nested mapping of (credit manager => credit account => permissions)
+
+## Constants
+
+### MAX_SANE_ACTIVE_BOTS
+
+The maximum number of bots that can have non-zero permissions for a single credit account. This limit prevents excessive gas costs when processing bot permissions.
+
+## Permission System
+
+### How Permissions Work
+
+1. **Permission Bit Mask**: Each bot declares a `requiredPermissions()` value representing the specific actions it needs
+2. **Exact Match Required**: When granting permissions, the provided mask must exactly match the bot's requirements
+3. **Per-Account**: Permissions are isolated per credit account
+4. **Zero to Revoke**: Setting permissions to 0 revokes all permissions
+
+### Permission Flow
+
+```
+┌─────────────┐
+│    User     │
+└──────┬──────┘
+       │ Calls Credit Facade
+       ↓
+┌─────────────────┐
+│  Credit Facade  │
+└──────┬──────────┘
+       │ Calls setBotPermissions
+       ↓
+┌─────────────────┐       ┌──────────────┐
+│    BotList      │←──────│     Bot      │
+│                 │       │ (validates)  │
+│  - Validates    │       └──────────────┘
+│  - Stores perms │
+│  - Tracks active│
+└─────────────────┘
+```
+
+## Events
+
+### SetBotPermissions
+
+```solidity
+event SetBotPermissions(
+    address indexed bot,
+    address indexed creditManager,
+    address indexed creditAccount,
+    uint192 permissions
+)
+```
+
+Emitted when bot permissions are set for a credit account.
+
+### ForbidBot
+
+```solidity
+event ForbidBot(address indexed bot)
+```
+
+Emitted when a bot is forbidden.
+
+## Security Considerations
+
+### Bot Validation
+
+The contract validates that:
+1. Provided permissions match the bot's `requiredPermissions()`
+2. The bot is not forbidden when setting non-zero permissions
+3. The caller is the credit facade connected to the credit manager
+4. The credit account is currently open
+
+### Active Bot Limit
+
+The `MAX_SANE_ACTIVE_BOTS` limit prevents:
+- Excessive gas costs when iterating over active bots
+- DoS attacks through bot permission spam
+
+### Caller Validation
+
+Only the credit facade connected to a credit manager can modify permissions for accounts managed by that credit manager. This ensures:
+- Only authorized contracts can modify permissions
+- Permissions can only be set for open accounts
+
+## Usage Example
+
+```solidity
+// Check if bot has permissions
+uint192 perms = IBotListV3(botList).botPermissions(bot, account);
+
+if (perms != 0) {
+    // Bot can perform actions
+    // Execute bot operations
+}
+
+// Grant permissions to a bot (from credit facade)
+uint192 requiredPerms = IBot(bot).requiredPermissions();
+IBotListV3(botList).setBotPermissions(bot, account, requiredPerms);
+
+// Revoke permissions
+IBotListV3(botList).setBotPermissions(bot, account, 0);
+
+// Get all active bots for an account
+address[] memory bots = IBotListV3(botList).activeBots(account);
+
+// Check bot status
+(uint192 permissions, bool forbidden) = IBotListV3(botList).getBotStatus(
+    bot,
+    account
+);
+
+// Forbid a bot (from owner)
+IBotListV3(botList).forbidBot(maliciousBot);
+```
+
+## Integration with Bots
+
+Bots must implement the `IBot` interface:
+
+```solidity
+interface IBot {
+    function requiredPermissions() external view returns (uint192);
+}
+```
+
+The bot declares which permissions it needs, and those exact permissions must be granted by the user through the credit facade.

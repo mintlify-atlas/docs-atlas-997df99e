@@ -1,0 +1,353 @@
+---
+title: "Managing Debt"
+description: "Learn how to increase and decrease debt on Gearbox Protocol credit accounts with real function calls and examples"
+---
+
+## Overview
+
+Debt management is controlled through the Credit Facade multicall interface. The protocol supports two debt operations:
+
+- **Increase Debt** - Borrow additional funds from the pool
+- **Decrease Debt** - Repay borrowed funds
+
+## Debt Management Actions
+
+The Credit Manager uses `ManageDebtAction` enum internally:
+
+```solidity
+enum ManageDebtAction {
+    INCREASE_DEBT,  // Borrow more funds
+    DECREASE_DEBT   // Repay debt
+}
+```
+
+## Increasing Debt
+
+### Function Signature
+
+```solidity
+function increaseDebt(uint256 amount) external;
+```
+
+Call this function within a multicall to borrow additional funds:
+
+```solidity
+MultiCall[] memory calls = new MultiCall[](1);
+
+calls[0] = MultiCall({
+    target: address(facade),
+    callData: abi.encodeCall(
+        ICreditFacadeV3Multicall.increaseDebt,
+        (borrowAmount)
+    )
+});
+
+facade.multicall(creditAccount, calls);
+```
+
+### Constraints
+
+<Warning>
+  Increasing debt has several important restrictions:
+</Warning>
+
+1. **Debt limits** - Resulting debt must be within `[minDebt, maxDebt]`
+2. **Same block restriction** - Cannot update debt twice in the same block
+3. **Forbidden tokens** - Cannot increase debt if forbidden tokens are enabled
+4. **Per-block limit** - Total borrowed by Credit Manager in block cannot exceed limit
+5. **Not during closure** - Cannot increase debt when closing an account
+
+### Complete Example
+
+```solidity
+function borrowMore(
+    ICreditFacadeV3 facade,
+    address creditAccount,
+    uint256 additionalDebt
+) external {
+    // Check debt limits
+    (uint128 minDebt, uint128 maxDebt) = facade.debtLimits();
+    ICreditManagerV3 manager = ICreditManagerV3(facade.creditManager());
+    
+    // Get current debt
+    (uint256 currentDebt,,,,,,,) = manager.creditAccountInfo(creditAccount);
+    uint256 newDebt = currentDebt + additionalDebt;
+    
+    require(newDebt >= minDebt && newDebt <= maxDebt, "Debt out of range");
+    
+    // Build multicall
+    MultiCall[] memory calls = new MultiCall[](1);
+    calls[0] = MultiCall({
+        target: address(facade),
+        callData: abi.encodeCall(
+            ICreditFacadeV3Multicall.increaseDebt,
+            (additionalDebt)
+        )
+    });
+    
+    facade.multicall(creditAccount, calls);
+}
+```
+
+## Decreasing Debt
+
+### Function Signature
+
+```solidity
+function decreaseDebt(uint256 amount) external;
+```
+
+Repay debt through multicall. The protocol repays in this order:
+1. Quota interest and fees
+2. Base interest and fees
+3. Debt principal
+
+```solidity
+MultiCall[] memory calls = new MultiCall[](1);
+
+calls[0] = MultiCall({
+    target: address(facade),
+    callData: abi.encodeCall(
+        ICreditFacadeV3Multicall.decreaseDebt,
+        (repayAmount)
+    )
+});
+
+facade.multicall(creditAccount, calls);
+```
+
+### Full Repayment
+
+Pass a value exceeding total debt to repay fully:
+
+```solidity
+// Repay all debt
+calls[0] = MultiCall({
+    target: address(facade),
+    callData: abi.encodeCall(
+        ICreditFacadeV3Multicall.decreaseDebt,
+        (type(uint256).max)
+    )
+});
+```
+
+<Note>
+  Full repayment enables a special mode that skips collateral checks. This requires disabling all quotas first - the account must have no potential debt sources.
+</Note>
+
+### Constraints
+
+1. **Not during opening** - Cannot decrease debt when opening an account
+2. **Same block restriction** - Cannot update debt twice in the same block
+3. **Minimum debt** - Resulting debt must be above `minDebt` or zero
+4. **Quota requirement** - Full repayment requires all quotas to be disabled
+
+### Repayment with Quota Cleanup
+
+```solidity
+MultiCall[] memory calls = new MultiCall[](3);
+
+// 1. Disable WETH quota
+calls[0] = MultiCall({
+    target: address(facade),
+    callData: abi.encodeCall(
+        ICreditFacadeV3Multicall.updateQuota,
+        (weth, type(int96).min, 0) // min value disables quota
+    )
+});
+
+// 2. Disable WBTC quota
+calls[1] = MultiCall({
+    target: address(facade),
+    callData: abi.encodeCall(
+        ICreditFacadeV3Multicall.updateQuota,
+        (wbtc, type(int96).min, 0)
+    )
+});
+
+// 3. Fully repay debt
+calls[2] = MultiCall({
+    target: address(facade),
+    callData: abi.encodeCall(
+        ICreditFacadeV3Multicall.decreaseDebt,
+        (type(uint256).max)
+    )
+});
+
+facade.multicall(creditAccount, calls);
+```
+
+## Reading Debt State
+
+### Basic Debt Information
+
+```solidity
+ICreditManagerV3 manager = ICreditManagerV3(facade.creditManager());
+
+(
+    uint256 debt,
+    uint256 cumulativeIndexLastUpdate,
+    uint128 cumulativeQuotaInterest,
+    uint128 quotaFees,
+    ,,,
+) = manager.creditAccountInfo(creditAccount);
+```
+
+### Detailed Debt Calculation
+
+Get comprehensive debt and collateral data:
+
+```solidity
+CollateralDebtData memory data = manager.calcDebtAndCollateral(
+    creditAccount,
+    CollateralCalcTask.DEBT_ONLY
+);
+
+// Detailed debt breakdown
+uint256 totalDebt = data.debt;
+uint256 accruedInterest = data.accruedInterest;
+uint256 accruedFees = data.accruedFees;
+uint256 totalDebtUSD = data.totalDebtUSD;
+```
+
+## Debt Management Patterns
+
+### Leveraging Up
+
+Borrow more and deploy to yield strategy:
+
+```solidity
+MultiCall[] memory calls = new MultiCall[](3);
+
+// 1. Borrow more
+calls[0] = MultiCall({
+    target: address(facade),
+    callData: abi.encodeCall(
+        ICreditFacadeV3Multicall.increaseDebt,
+        (borrowAmount)
+    )
+});
+
+// 2. Swap borrowed tokens via adapter
+calls[1] = MultiCall({
+    target: uniswapAdapter,
+    callData: abi.encodeWithSelector(
+        IUniswapV3Adapter.exactInputSingle.selector,
+        swapParams
+    )
+});
+
+// 3. Deposit to yield protocol via adapter
+calls[2] = MultiCall({
+    target: yieldAdapter,
+    callData: abi.encodeWithSelector(
+        IYieldAdapter.deposit.selector,
+        depositAmount
+    )
+});
+
+facade.multicall(creditAccount, calls);
+```
+
+### Deleveraging
+
+Withdraw from positions and repay debt:
+
+```solidity
+MultiCall[] memory calls = new MultiCall[](3);
+
+// 1. Withdraw from yield protocol
+calls[0] = MultiCall({
+    target: yieldAdapter,
+    callData: abi.encodeWithSelector(
+        IYieldAdapter.withdraw.selector,
+        withdrawAmount
+    )
+});
+
+// 2. Swap tokens back to underlying
+calls[1] = MultiCall({
+    target: uniswapAdapter,
+    callData: abi.encodeWithSelector(
+        IUniswapV3Adapter.exactInputSingle.selector,
+        swapParams
+    )
+});
+
+// 3. Repay debt
+calls[2] = MultiCall({
+    target: address(facade),
+    callData: abi.encodeCall(
+        ICreditFacadeV3Multicall.decreaseDebt,
+        (repayAmount)
+    )
+});
+
+facade.multicall(creditAccount, calls);
+```
+
+## Interest Calculation
+
+Debt accrues interest based on:
+
+- **Base interest** - Charged on principal debt
+- **Quota interest** - Charged on quota-enabled collateral
+- **Fees** - Protocol and liquidation fees
+
+The Credit Manager tracks cumulative indices:
+
+```solidity
+interface ICreditManagerV3 {
+    function manageDebt(
+        address creditAccount,
+        uint256 amount,
+        uint256 enabledTokensMask,
+        ManageDebtAction action
+    ) external returns (
+        uint256 newDebt,
+        uint256 tokensToEnable,
+        uint256 tokensToDisable
+    );
+}
+```
+
+## Health Factor and Collateral
+
+After debt changes, the protocol performs a collateral check:
+
+```solidity
+// Health factor = (Total Weighted Value) / (Total Debt)
+// Must be >= 10000 (100%) to avoid liquidation
+
+uint256 minHealthFactor = 10000; // 100%
+
+bool isLiquidatable = manager.isLiquidatable(
+    creditAccount,
+    uint16(minHealthFactor)
+);
+```
+
+<Warning>
+  Increasing debt or decreasing collateral reduces your health factor. Always maintain health factor above 100% to avoid liquidation.
+</Warning>
+
+## Error Scenarios
+
+Common debt management errors:
+
+- `DebtAmountOutOfRange` - Debt not within `[minDebt, maxDebt]`
+- `DebtUpdatedInSameBlock` - Attempting second debt update in block
+- `ForbiddenTokensEnabled` - Forbidden tokens prevent debt increase
+- `QuotasNotDisabled` - Full repayment requires zero quotas
+- `InsufficientCollateral` - Health factor below minimum after operation
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Opening Accounts" icon="folder-open" href="/guides/opening-credit-account">
+    Create credit accounts with initial debt
+  </Card>
+  <Card title="Working with Adapters" icon="plug" href="/guides/working-with-adapters">
+    Use borrowed funds in DeFi protocols
+  </Card>
+</CardGroup>

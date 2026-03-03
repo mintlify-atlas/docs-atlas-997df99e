@@ -1,0 +1,73 @@
+---
+title: MultiCall
+description: Struct representing a single operation in a multicall sequence
+---
+
+The `MultiCall` struct represents a single call in a multicall sequence, allowing batched operations on credit accounts.
+
+## Struct Definition
+
+```solidity
+struct MultiCall {
+    address target;
+    bytes callData;
+}
+```
+
+## Fields
+
+<ParamField path="target" type="address">
+  The target contract for the call. This is either the credit facade (for account management operations) or an adapter (for protocol interactions).
+</ParamField>
+
+<ParamField path="callData" type="bytes">
+  The encoded function call data to execute on the target contract.
+</ParamField>
+
+## Usage
+
+MultiCall structs are used in arrays to batch multiple operations together:
+
+```solidity
+MultiCall[] memory calls = new MultiCall[](2);
+
+// Add collateral
+calls[0] = MultiCall({
+    target: creditFacade,
+    callData: abi.encodeCall(
+        ICreditFacadeV3Multicall.addCollateral,
+        (token, amount)
+    )
+});
+
+// Increase debt
+calls[1] = MultiCall({
+    target: creditFacade,
+    callData: abi.encodeCall(
+        ICreditFacadeV3Multicall.increaseDebt,
+        (borrowAmount)
+    )
+});
+
+creditFacade.multicall(creditAccount, calls);
+```
+
+## Common Targets
+
+**Credit Facade**: For account management operations:
+- `addCollateral`
+- `withdrawCollateral`
+- `increaseDebt`
+- `decreaseDebt`
+- `updateQuota`
+
+**Adapters**: For protocol interactions:
+- Swap tokens on DEXes
+- Provide liquidity
+- Stake tokens
+- Any other whitelisted protocol interaction
+
+## Related Structs
+
+- `FullCheckParams` - Parameters for collateral checks during multicalls
+- `DebtLimits` - Debt limits enforced during multicalls

@@ -1,0 +1,416 @@
+---
+title: Pool V3
+description: ERC-4626 compliant lending pool with interest rate management and quota revenue support
+---
+
+## Overview
+
+PoolV3 is the core lending pool contract in Gearbox Protocol V3. It implements the ERC-4626 vault standard for deposits and withdrawals, manages borrowing by connected credit managers, and tracks interest rates and quota revenue.
+
+**Contract Location:** `contracts/pool/PoolV3.sol`
+
+## Key Features
+
+- **ERC-4626 Compliance**: Full implementation of the vault standard for liquidity provision
+- **ERC-20 Permit**: Supports gasless approvals via EIP-2612
+- **Credit Manager Lending**: Lends funds to credit accounts through authorized credit managers
+- **Dynamic Interest Rates**: Interest rates calculated based on pool utilization via interest rate model
+- **Quota Revenue**: Additional revenue stream from quota interest on risky assets
+- **Pausable**: Deposits, withdrawals, and transfers can be paused by authorized admins
+- **Withdrawal Fees**: Optional fees on withdrawals sent to treasury
+
+## Architecture
+
+```solidity
+contract PoolV3 is
+    ERC4626,
+    ERC20Permit,
+    Pausable,
+    ReentrancyGuardTrait,
+    SanityCheckTrait,
+    ACLTrait,
+    ContractsRegisterTrait,
+    IPoolV3
+```
+
+## State Variables
+
+### Immutable
+
+<ParamField path="version" type="uint256">
+  Contract version: `3_10`
+</ParamField>
+
+<ParamField path="treasury" type="address">
+  Protocol treasury address that receives profits and withdrawal fees
+</ParamField>
+
+### Configuration
+
+<ParamField path="interestRateModel" type="address">
+  Address of the interest rate model contract used to calculate borrow rates
+</ParamField>
+
+<ParamField path="poolQuotaKeeper" type="address">
+  Address of the pool quota keeper managing quota interests
+</ParamField>
+
+<ParamField path="withdrawFee" type="uint16">
+  Withdrawal fee in basis points (bps)
+</ParamField>
+
+### Interest Tracking
+
+<ParamField path="lastBaseInterestUpdate" type="uint40">
+  Timestamp of the last base interest rate and index update
+</ParamField>
+
+<ParamField path="lastQuotaRevenueUpdate" type="uint40">
+  Timestamp of the last quota revenue update
+</ParamField>
+
+## Core Functions
+
+### ERC-4626 Lending
+
+#### deposit
+
+```solidity
+function deposit(uint256 assets, address receiver)
+    external
+    returns (uint256 shares)
+```
+
+Deposits underlying tokens into the pool in exchange for shares.
+
+<ParamField path="assets" type="uint256">
+  Amount of underlying tokens to deposit
+</ParamField>
+
+<ParamField path="receiver" type="address">
+  Address to receive the minted shares
+</ParamField>
+
+**Returns:** Number of shares minted
+
+**Requirements:**
+- Pool must not be paused
+- Receiver must not be zero address
+- Assets and resulting shares must be non-zero
+
+#### depositWithReferral
+
+```solidity
+function depositWithReferral(uint256 assets, address receiver, uint256 referralCode)
+    external
+    returns (uint256 shares)
+```
+
+Same as `deposit` but emits a referral event.
+
+<ParamField path="referralCode" type="uint256">
+  Referral code for tracking deposit source
+</ParamField>
+
+#### withdraw
+
+```solidity
+function withdraw(uint256 assets, address receiver, address owner)
+    external
+    returns (uint256 shares)
+```
+
+Burns shares to withdraw underlying tokens.
+
+<ParamField path="assets" type="uint256">
+  Amount of underlying to withdraw
+</ParamField>
+
+<ParamField path="receiver" type="address">
+  Address to receive the underlying tokens
+</ParamField>
+
+<ParamField path="owner" type="address">
+  Address to burn shares from (must approve if not msg.sender)
+</ParamField>
+
+**Returns:** Number of shares burned
+
+#### redeem
+
+```solidity
+function redeem(uint256 shares, address receiver, address owner)
+    external
+    returns (uint256 assets)
+```
+
+Redeems shares for underlying tokens.
+
+<ParamField path="shares" type="uint256">
+  Number of shares to redeem
+</ParamField>
+
+**Returns:** Amount of underlying withdrawn
+
+### Borrowing
+
+#### lendCreditAccount
+
+```solidity
+function lendCreditAccount(uint256 borrowedAmount, address creditAccount)
+    external
+```
+
+Lends funds to a credit account. Only callable by authorized credit managers.
+
+<ParamField path="borrowedAmount" type="uint256">
+  Amount to lend
+</ParamField>
+
+<ParamField path="creditAccount" type="address">
+  Address of the credit account to receive funds
+</ParamField>
+
+**Requirements:**
+- Caller must be an authorized credit manager
+- Borrowed amount must not exceed credit manager's debt limit
+- Total borrowed must not exceed pool's total debt limit
+- Sufficient available liquidity must exist
+
+```solidity
+// Example: Credit manager borrows 1000 USDC for a credit account
+pool.lendCreditAccount(1000e6, creditAccountAddress);
+```
+
+#### repayCreditAccount
+
+```solidity
+function repayCreditAccount(uint256 repaidAmount, uint256 profit, uint256 loss)
+    external
+```
+
+Updates pool state after debt repayment. Only callable by credit managers.
+
+<ParamField path="repaidAmount" type="uint256">
+  Amount of principal repaid
+</ParamField>
+
+<ParamField path="profit" type="uint256">
+  Pool's profit after repayment (mints shares to treasury)
+</ParamField>
+
+<ParamField path="loss" type="uint256">
+  Pool's loss after repayment (burns treasury shares)
+</ParamField>
+
+<Note>
+The credit manager must transfer underlying from the credit account to the pool before calling this function.
+</Note>
+
+### View Functions
+
+#### availableLiquidity
+
+```solidity
+function availableLiquidity() external view returns (uint256)
+```
+
+Returns the current available liquidity (underlying token balance).
+
+#### expectedLiquidity
+
+```solidity
+function expectedLiquidity() external view returns (uint256)
+```
+
+Returns the total expected liquidity including:
+- Available liquidity
+- Borrowed principal
+- Accrued base interest
+- Accrued quota revenue
+
+#### baseInterestRate
+
+```solidity
+function baseInterestRate() external view returns (uint256)
+```
+
+Returns the current annual base interest rate in ray (1e27).
+
+#### supplyRate
+
+```solidity
+function supplyRate() external view returns (uint256)
+```
+
+Returns the annual rate liquidity providers receive, including:
+- Base interest proportional to borrowed amount
+- Quota revenue
+- Net of withdrawal fees
+
+#### baseInterestIndex
+
+```solidity
+function baseInterestIndex() external view returns (uint256)
+```
+
+Returns the current cumulative base interest index in ray.
+
+#### creditManagerBorrowable
+
+```solidity
+function creditManagerBorrowable(address creditManager) external view returns (uint256)
+```
+
+Returns the amount available to borrow for a specific credit manager, considering:
+- Credit manager's debt limit
+- Total pool debt limit  
+- Interest rate model constraints
+- Available liquidity
+
+### Quota Management
+
+#### updateQuotaRevenue
+
+```solidity
+function updateQuotaRevenue(int256 quotaRevenueDelta) external
+```
+
+Updates quota revenue by a delta. Only callable by pool quota keeper.
+
+<ParamField path="quotaRevenueDelta" type="int256">
+  Change in annual quota revenue (can be negative)
+</ParamField>
+
+#### setQuotaRevenue
+
+```solidity
+function setQuotaRevenue(uint256 newQuotaRevenue) external
+```
+
+Sets quota revenue to a specific value. Only callable by pool quota keeper.
+
+### Configuration
+
+#### setInterestRateModel
+
+```solidity
+function setInterestRateModel(address newInterestRateModel) external
+```
+
+Sets a new interest rate model. Only callable by configurator.
+
+#### setPoolQuotaKeeper
+
+```solidity
+function setPoolQuotaKeeper(address newPoolQuotaKeeper) external
+```
+
+Sets a new pool quota keeper. Only callable by configurator.
+
+**Requirements:**
+- New quota keeper must be compatible (points to this pool)
+
+#### setTotalDebtLimit
+
+```solidity
+function setTotalDebtLimit(uint256 newLimit) external
+```
+
+Sets the total debt limit for the pool. Use `type(uint256).max` for no limit.
+
+#### setCreditManagerDebtLimit
+
+```solidity
+function setCreditManagerDebtLimit(address creditManager, uint256 newLimit) external
+```
+
+Sets the debt limit for a specific credit manager.
+
+#### setWithdrawFee
+
+```solidity
+function setWithdrawFee(uint256 newWithdrawFee) external
+```
+
+Sets the withdrawal fee in basis points (max 100 = 1%).
+
+#### pause / unpause
+
+```solidity
+function pause() external
+function unpause() external
+```
+
+Pauses or unpauses deposits, withdrawals, and transfers. Borrowing and repayment remain active for emergency liquidations.
+
+## Events
+
+```solidity
+event Refer(address indexed onBehalfOf, uint256 indexed referralCode, uint256 amount)
+event Borrow(address indexed creditManager, address indexed creditAccount, uint256 amount)
+event Repay(address indexed creditManager, uint256 borrowedAmount, uint256 profit, uint256 loss)
+event IncurUncoveredLoss(address indexed creditManager, uint256 loss)
+event SetInterestRateModel(address indexed newInterestRateModel)
+event SetPoolQuotaKeeper(address indexed newPoolQuotaKeeper)
+event SetTotalDebtLimit(uint256 limit)
+event AddCreditManager(address indexed creditManager)
+event SetCreditManagerDebtLimit(address indexed creditManager, uint256 newLimit)
+event SetWithdrawFee(uint256 fee)
+```
+
+## Example Usage
+
+### Depositing Liquidity
+
+```solidity
+// Approve pool to spend underlying
+IERC20(underlying).approve(address(pool), 10000e6);
+
+// Deposit 10,000 USDC
+uint256 shares = pool.deposit(10000e6, msg.sender);
+
+// Or deposit with referral
+uint256 shares = pool.depositWithReferral(10000e6, msg.sender, 12345);
+```
+
+### Withdrawing Liquidity
+
+```solidity
+// Withdraw 5,000 USDC
+uint256 sharesBurned = pool.withdraw(5000e6, msg.sender, msg.sender);
+
+// Or redeem specific number of shares
+uint256 assetsReceived = pool.redeem(shares / 2, msg.sender, msg.sender);
+```
+
+### Checking Pool State
+
+```solidity
+// Check available liquidity
+uint256 available = pool.availableLiquidity();
+
+// Check expected liquidity (includes borrowed + interest)
+uint256 expected = pool.expectedLiquidity();
+
+// Check current rates
+uint256 borrowRate = pool.baseInterestRate(); // Rate borrowers pay
+uint256 lenderRate = pool.supplyRate(); // Rate lenders receive
+
+// Check how much a credit manager can borrow
+uint256 borrowable = pool.creditManagerBorrowable(creditManagerAddress);
+```
+
+## Security Considerations
+
+<Info>
+**First Depositor Protection**: Small amount of shares should be minted to a dead address before allowing borrowing to prevent first depositor front-running attacks.
+</Info>
+
+<Info>
+**Reentrancy Protection**: All state-changing functions use the `nonReentrant` modifier.
+</Info>
+
+<Info>
+**Pausability**: Emergency pause only blocks deposits/withdrawals/transfers, not borrowing/repayment, to allow liquidations to proceed.
+</Info>

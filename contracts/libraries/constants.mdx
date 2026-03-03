@@ -1,0 +1,360 @@
+---
+title: "Constants"
+description: "Protocol-wide constants and configuration values"
+---
+
+## Overview
+
+The `Constants` library defines important protocol-wide constants used throughout Gearbox Protocol V3. These values control precision, time periods, limits, and other configuration parameters.
+
+## Address Provider Keys
+
+Constants for looking up core protocol contracts in the Address Provider:
+
+```solidity
+bytes32 constant AP_GEAR_TOKEN = "GLOBAL::GEAR_TOKEN";
+bytes32 constant AP_INSTANCE_MANAGER_PROXY = "INSTANCE_MANAGER_PROXY";
+bytes32 constant AP_CROSS_CHAIN_GOVERNANCE_PROXY = "CROSS_CHAIN_GOVERNANCE_PROXY";
+bytes32 constant AP_PRICE_FEED_STORE = "PRICE_FEED_STORE";
+```
+
+<Info>
+These keys are used with the Address Provider to retrieve addresses of core protocol contracts. For example:
+```solidity
+address gearToken = addressProvider.getAddress(AP_GEAR_TOKEN);
+```
+</Info>
+
+## Version Control
+
+```solidity
+uint256 constant NO_VERSION_CONTROL = 0;
+```
+
+Special value indicating no version restrictions apply.
+
+## Precision Constants
+
+### WAD
+
+```solidity
+uint256 constant WAD = 1e18;
+```
+
+Standard 18-decimal precision (1.0 in WAD).
+
+**Usage**: Basic token amounts, percentages stored as decimals.
+
+### RAY
+
+```solidity
+uint256 constant RAY = 1e27;
+```
+
+High-precision 27-decimal constant (1.0 in RAY).
+
+**Usage**: Cumulative interest indices, price conversions requiring high precision.
+
+<Note>
+RAY provides 27 decimals of precision to minimize rounding errors in interest calculations that accumulate over time. Even after years of compounding, RAY-based calculations maintain accuracy.
+</Note>
+
+### PERCENTAGE_FACTOR
+
+```solidity
+uint16 constant PERCENTAGE_FACTOR = 1e4;
+```
+
+Basis points denominator (100% = 10,000 basis points).
+
+**Usage**: Fees, liquidation thresholds, interest rates.
+
+**Examples**:
+- 1% = 100
+- 5% = 500
+- 50% = 5,000
+- 100% = 10,000
+
+```solidity
+// Convert basis points to percentage
+uint256 amount = 1000e18;
+uint16 bps = 500; // 5%
+uint256 result = amount * bps / PERCENTAGE_FACTOR; // 50e18
+```
+
+## Time Constants
+
+### SECONDS_PER_YEAR
+
+```solidity
+uint256 constant SECONDS_PER_YEAR = 365 days;
+```
+
+Number of seconds in one year (31,536,000 seconds).
+
+**Usage**: Converting annual rates to per-second rates for interest calculations.
+
+```solidity
+// Calculate interest for a time period
+uint256 annualRate = 500; // 5% APR
+uint256 timeDelta = block.timestamp - lastUpdate;
+uint256 interest = principal * annualRate * timeDelta 
+    / (PERCENTAGE_FACTOR * SECONDS_PER_YEAR);
+```
+
+### Epoch Constants
+
+```solidity
+uint256 constant EPOCH_LENGTH = 7 days;
+uint256 constant FIRST_EPOCH_TIMESTAMP = 1702900800;  // Dec 18, 2023 12:00:00 GMT
+uint256 constant EPOCHS_TO_WITHDRAW = 4;
+```
+
+**EPOCH_LENGTH**: Duration of one epoch (7 days).
+
+**FIRST_EPOCH_TIMESTAMP**: Unix timestamp when epoch counting began.
+
+**EPOCHS_TO_WITHDRAW**: Number of epochs required before withdrawal (4 weeks).
+
+<Info>
+Epochs are used for governance and withdrawal queuing:
+```solidity
+function getCurrentEpoch() public view returns (uint256) {
+    return (block.timestamp - FIRST_EPOCH_TIMESTAMP) / EPOCH_LENGTH;
+}
+```
+</Info>
+
+## Limit Constants
+
+### MAX_SANE_ENABLED_TOKENS
+
+```solidity
+uint8 constant MAX_SANE_ENABLED_TOKENS = 20;
+```
+
+Maximum reasonable number of enabled tokens on a credit account.
+
+**Purpose**: Gas optimization and safety. More tokens = higher gas costs for collateral checks.
+
+### MAX_SANE_EPOCH_LENGTH
+
+```solidity
+uint256 constant MAX_SANE_EPOCH_LENGTH = 28 days;
+```
+
+Maximum reasonable epoch length (4 weeks).
+
+### MAX_SANE_ACTIVE_BOTS
+
+```solidity
+uint256 constant MAX_SANE_ACTIVE_BOTS = 5;
+```
+
+Maximum number of active bot addresses per credit account.
+
+<Warning>
+These "MAX_SANE" constants are recommendations, not hard limits. Exceeding them may lead to:
+- High gas costs
+- Transaction failures due to block gas limit
+- Poor user experience
+</Warning>
+
+## Fee Constants
+
+### MAX_WITHDRAW_FEE
+
+```solidity
+uint8 constant MAX_WITHDRAW_FEE = 100;
+```
+
+Maximum withdrawal fee (100 basis points = 1%).
+
+**Purpose**: Caps withdrawal fees to prevent excessive charges.
+
+```solidity
+require(withdrawFee <= MAX_WITHDRAW_FEE, "Fee too high");
+```
+
+### DEFAULT_LIMIT_PER_BLOCK_MULTIPLIER
+
+```solidity
+uint8 constant DEFAULT_LIMIT_PER_BLOCK_MULTIPLIER = 2;
+```
+
+Default multiplier for per-block limits.
+
+## Flags
+
+### BOT_PERMISSIONS_SET_FLAG
+
+```solidity
+uint8 constant BOT_PERMISSIONS_SET_FLAG = 1;
+```
+
+Flag indicating bot permissions have been explicitly set.
+
+## Token Masks
+
+### UNDERLYING_TOKEN_MASK
+
+```solidity
+uint256 constant UNDERLYING_TOKEN_MASK = 1;
+```
+
+Bitmask for the underlying token (always at index 0, bit 0 set).
+
+**Usage**: The underlying token always has mask = 1 (binary: `...0001`).
+
+```solidity
+// Check if underlying is enabled
+bool hasUnderlying = (enabledTokensMask & UNDERLYING_TOKEN_MASK) != 0;
+
+// Enable underlying
+enabledTokensMask |= UNDERLYING_TOKEN_MASK;
+```
+
+<Info>
+Every credit account's underlying token is mapped to index 0, so its mask is always `2^0 = 1`. Other tokens have masks `2^1`, `2^2`, etc.
+</Info>
+
+## Special Addresses
+
+### INACTIVE_CREDIT_ACCOUNT_ADDRESS
+
+```solidity
+address constant INACTIVE_CREDIT_ACCOUNT_ADDRESS = address(1);
+```
+
+Special address indicating an inactive/unused credit account.
+
+**Purpose**: Distinguishes uninitialized accounts from active ones with zero address.
+
+## Usage Examples
+
+### Interest Calculation
+
+```solidity
+import {
+    RAY,
+    PERCENTAGE_FACTOR,
+    SECONDS_PER_YEAR
+} from "@gearbox-protocol/core-v3/contracts/libraries/Constants.sol";
+
+function calculateInterest(
+    uint256 principal,
+    uint256 annualRateBps,
+    uint256 timeDelta
+) public pure returns (uint256) {
+    // Convert annual rate to per-second rate and apply
+    return principal * annualRateBps * timeDelta 
+        / (PERCENTAGE_FACTOR * SECONDS_PER_YEAR);
+}
+```
+
+### Fee Calculation
+
+```solidity
+import {PERCENTAGE_FACTOR} from "@gearbox-protocol/core-v3/contracts/libraries/Constants.sol";
+
+function applyFee(
+    uint256 amount,
+    uint16 feeBps
+) public pure returns (uint256 feeAmount, uint256 remaining) {
+    feeAmount = amount * feeBps / PERCENTAGE_FACTOR;
+    remaining = amount - feeAmount;
+}
+
+// Example: 5% fee on 1000 tokens
+// (feeAmount, remaining) = applyFee(1000e18, 500)
+// feeAmount = 50e18, remaining = 950e18
+```
+
+### Liquidation Threshold
+
+```solidity
+import {PERCENTAGE_FACTOR} from "@gearbox-protocol/core-v3/contracts/libraries/Constants.sol";
+
+function calcWeightedValue(
+    uint256 tokenValue,
+    uint16 liquidationThreshold
+) public pure returns (uint256) {
+    return tokenValue * liquidationThreshold / PERCENTAGE_FACTOR;
+}
+
+// Example: $1000 worth of token with 80% LT
+// weightedValue = calcWeightedValue(1000e18, 8000) = 800e18
+```
+
+### Epoch Calculation
+
+```solidity
+import {
+    EPOCH_LENGTH,
+    FIRST_EPOCH_TIMESTAMP
+} from "@gearbox-protocol/core-v3/contracts/libraries/Constants.sol";
+
+function getCurrentEpoch() public view returns (uint256) {
+    return (block.timestamp - FIRST_EPOCH_TIMESTAMP) / EPOCH_LENGTH;
+}
+
+function getEpochEndTime(uint256 epoch) public pure returns (uint256) {
+    return FIRST_EPOCH_TIMESTAMP + (epoch + 1) * EPOCH_LENGTH;
+}
+```
+
+### Working with RAY
+
+```solidity
+import {RAY} from "@gearbox-protocol/core-v3/contracts/libraries/Constants.sol";
+
+function calculateWithIndex(
+    uint256 amount,
+    uint256 cumulativeIndex
+) public pure returns (uint256) {
+    // cumulativeIndex is in RAY precision
+    return amount * cumulativeIndex / RAY;
+}
+
+// Example: debt with 5% accrued interest
+// amount = 1000e18
+// cumulativeIndex = 1.05e27 (105% in RAY)
+// result = 1000e18 * 1.05e27 / 1e27 = 1050e18
+```
+
+## Conversion Reference
+
+| Unit | Value | Usage |
+|------|-------|-------|
+| WAD | `1e18` | Token amounts, basic decimals |
+| RAY | `1e27` | Interest indices, high precision |
+| PERCENTAGE_FACTOR | `1e4` | Basis points (0.01% precision) |
+
+**Converting between units:**
+```solidity
+// WAD to RAY
+uint256 rayValue = wadValue * 1e9;
+
+// RAY to WAD
+uint256 wadValue = rayValue / 1e9;
+
+// Basis points to decimal
+uint256 decimalValue = bps * WAD / PERCENTAGE_FACTOR;
+
+// Decimal to basis points  
+uint16 bps = uint16(decimalValue * PERCENTAGE_FACTOR / WAD);
+```
+
+<Note>
+Always be mindful of precision when performing calculations:
+- Multiply before divide to avoid truncation
+- Use RAY for cumulative calculations over time
+- Use PERCENTAGE_FACTOR for human-readable percentages
+</Note>
+
+## Related Libraries
+
+- [CreditLogic](/contracts/libraries/credit-logic) - Uses time and percentage constants
+- [CollateralLogic](/contracts/libraries/collateral-logic) - Uses RAY and PERCENTAGE_FACTOR
+- [QuotasLogic](/contracts/libraries/quotas-logic) - Uses RAY and SECONDS_PER_YEAR
+- [BitMask](/contracts/libraries/bitmask) - Uses UNDERLYING_TOKEN_MASK

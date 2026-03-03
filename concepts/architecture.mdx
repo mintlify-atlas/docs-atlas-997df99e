@@ -1,0 +1,245 @@
+---
+title: Architecture Overview
+description: Comprehensive overview of Gearbox Protocol Core V3 architecture, components, and design patterns
+---
+
+Gearbox Protocol Core V3 is a composable leverage protocol that provides onchain credit through a modular, secure architecture. The system enables users to borrow funds and interact with whitelisted DeFi protocols while maintaining strict collateralization requirements.
+
+## Core Components
+
+The protocol consists of four primary components that work together to provide credit infrastructure:
+
+### 1. Pool (PoolV3)
+
+The lending pool implements ERC-4626 standard for vault functionality and serves as the liquidity source for credit accounts.
+
+**Key Responsibilities:**
+- Accept deposits from liquidity providers and mint LP tokens (shares)
+- Lend funds to credit managers for borrowing
+- Manage base interest rates and quota revenue
+- Track total debt across all connected credit managers
+
+```solidity
+struct DebtParams {
+    uint128 borrowed;  // Current borrowed amount
+    uint128 limit;     // Maximum borrowing limit
+}
+```
+
+The pool maintains separate debt tracking for each connected credit manager, enforcing both per-manager and global debt limits.
+
+### 2. Credit Manager (CreditManagerV3)
+
+The credit manager implements core logic for credit account management, debt accounting, and collateral validation.
+
+**Key Responsibilities:**
+- Open and close credit accounts
+- Manage debt operations (increase/decrease)
+- Execute collateral checks and liquidations
+- Track enabled tokens and quotas per account
+- Maintain adapter registry for whitelisted protocol interactions
+
+```solidity
+struct CreditAccountInfo {
+    uint256 debt;                      // Principal debt amount
+    uint256 cumulativeIndexLastUpdate; // Interest index at last update
+    uint128 cumulativeQuotaInterest;   // Accrued quota interest
+    uint128 quotaFees;                 // Accumulated quota fees
+    uint256 enabledTokensMask;         // Bitmask of enabled collateral
+    uint16 flags;                      // Account status flags
+    uint64 lastDebtUpdate;             // Timestamp of last debt change
+    address borrower;                  // Account owner
+}
+```
+
+<Info>
+The credit manager uses bitmask operations extensively for gas-efficient token tracking. Each token is assigned a unique bit position, allowing up to 256 tokens to be represented in a single `uint256`.
+</Info>
+
+### 3. Credit Facade (CreditFacadeV3)
+
+The credit facade is the user-facing interface that provides safe access to credit manager functionality through multicall operations.
+
+**Key Responsibilities:**
+- Execute multicall transactions with permission checks
+- Enforce debt limits and collateral requirements
+- Handle account opening, closing, and liquidation flows
+- Manage bot permissions for automated operations
+
+```solidity
+struct MultiCall {
+    address target;   // Either credit facade or adapter
+    bytes callData;   // Encoded function call
+}
+
+struct DebtLimits {
+    uint128 minDebt;  // Minimum debt per account
+    uint128 maxDebt;  // Maximum debt per account
+}
+```
+
+### 4. Pool Quota Keeper (PoolQuotaKeeperV3)
+
+The quota keeper manages token-specific quotas and interest rates for non-underlying collateral assets.
+
+**Key Responsibilities:**
+- Track quotas for each account and token combination
+- Calculate quota interest using additive (non-compounding) index
+- Enforce per-token quota limits
+- Manage quota increase fees
+
+```solidity
+struct TokenQuotaParams {
+    uint16 rate;                  // Interest rate in bps
+    uint192 cumulativeIndexLU;    // Cumulative index at last update
+    uint16 quotaIncreaseFee;      // One-time fee for quota increase
+    uint96 totalQuoted;           // Total quota across all accounts
+    uint96 limit;                 // Maximum allowed quota
+}
+
+struct AccountQuota {
+    uint96 quota;                 // Account's quota amount
+    uint192 cumulativeIndexLU;    // Index at account's last update
+}
+```
+
+<Note>
+Quota interest uses an additive index rather than compounding, making calculations simpler and gas costs more predictable.
+</Note>
+
+## Architectural Patterns
+
+### Separation of Concerns
+
+Gearbox V3 strictly separates different concerns across contracts:
+
+- **Credit Manager**: Core state and logic (internal only)
+- **Credit Facade**: User interface and safety checks
+- **Credit Configurator**: Admin functions and parameter updates
+
+This separation ensures that critical state-changing operations are properly guarded and that user-facing interfaces cannot bypass safety checks.
+
+### Multicall Pattern
+
+All user operations are executed through multicalls, enabling atomic sequences of operations:
+
+```solidity
+// Example: Open account with debt and execute swaps
+MultiCall[] memory calls = [
+    MultiCall({target: facade, callData: abi.encodeCall(facade.increaseDebt, (amount))}),
+    MultiCall({target: adapter, callData: abi.encodeCall(adapter.swap, (params))}),
+    // Additional operations...
+];
+facade.openCreditAccount(user, calls, referralCode);
+```
+
+The multicall pattern provides:
+- Atomic execution (all operations succeed or all fail)
+- Gas efficiency through batching
+- Flexible composition of operations
+- Single collateral check at the end
+
+### Active Credit Account Pattern
+
+Adapters interact with credit accounts through an "active credit account" mechanism:
+
+1. Facade sets the active credit account before adapter calls
+2. Adapter retrieves the active account from the credit manager
+3. Adapter executes operations on behalf of the account
+4. Facade clears the active account after execution
+
+This pattern eliminates the need to pass account addresses in every adapter call while maintaining security through access control.
+
+## Interest and Debt Accounting
+
+### Dual Interest System
+
+Gearbox V3 uses two separate interest systems:
+
+**Base Interest** (compounding):
+- Applied to the principal debt
+- Uses cumulative index that grows exponentially
+- Calculated as: `accruedInterest = debt * (indexNow / indexLastUpdate - 1)`
+
+**Quota Interest** (non-compounding):
+- Applied to quota amounts for non-underlying collateral
+- Uses additive cumulative index
+- Calculated as: `quotaInterest = quota * (indexNow - indexLastUpdate) / RAY`
+
+### Debt Repayment Priority
+
+When decreasing debt, components are repaid in this order:
+1. Quota fees
+2. Quota interest (+ protocol fee)
+3. Base interest (+ protocol fee)
+4. Debt principal
+
+This priority ensures that all interest obligations are satisfied before reducing the principal.
+
+## Collateral and Token Management
+
+### Enabled Tokens Bitmask
+
+Each credit account tracks which tokens are enabled as collateral using a bitmask:
+
+```solidity
+uint256 enabledTokensMask = account.enabledTokensMask;
+
+// Check if token is enabled
+bool isEnabled = (enabledTokensMask & tokenMask) != 0;
+
+// Enable token
+enabledTokensMask |= tokenMask;
+
+// Disable token
+enabledTokensMask &= ~tokenMask;
+```
+
+The underlying token (mask = 1) is always enabled, while other tokens must be explicitly enabled through quota allocation.
+
+### Liquidation Thresholds
+
+Each collateral token has a liquidation threshold (LT) that determines its contribution to the account's debt coverage:
+
+```solidity
+struct CollateralTokenData {
+    address token;
+    uint16 ltInitial;              // Starting LT in bps
+    uint16 ltFinal;                // Target LT in bps
+    uint40 timestampRampStart;     // When ramping begins
+    uint24 rampDuration;           // Ramp duration in seconds
+}
+```
+
+Liquidation thresholds can be ramped over time, transitioning smoothly from `ltInitial` to `ltFinal` during the specified period.
+
+<Warning>
+During LT ramping, the effective threshold changes linearly with each block, which must be considered when calculating account health.
+</Warning>
+
+## Version Information
+
+All core contracts implement version 3.10:
+
+```solidity
+uint256 public constant version = 3_10;
+```
+
+This version number helps ensure compatibility when contracts interact with each other and supports upgrade detection.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Credit Accounts" href="/concepts/credit-accounts">
+    Learn about credit account lifecycle and operations
+  </Card>
+  <Card title="Pools" href="/concepts/pools">
+    Understand lending pool mechanics and interest rates
+  </Card>
+  <Card title="Collateral & Debt" href="/concepts/collateral-debt">
+    Explore collateral checks and debt management
+  </Card>
+  <Card title="Quotas" href="/concepts/quotas">
+    Deep dive into the quota system
+  </Card>
+</CardGroup>

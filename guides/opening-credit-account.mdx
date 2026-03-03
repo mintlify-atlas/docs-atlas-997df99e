@@ -1,0 +1,299 @@
+---
+title: "Opening Credit Accounts"
+description: "Step-by-step guide to opening credit accounts in Gearbox Protocol Core V3 with real code examples"
+---
+
+## Overview
+
+Credit accounts are isolated smart contract wallets that hold collateral and debt. Opening an account requires providing initial collateral and optionally borrowing funds from the pool.
+
+## Account Opening Flow
+
+<Steps>
+  <Step title="Check Debt Limits">
+    Query the Credit Facade for minimum and maximum debt constraints:
+
+    ```solidity
+    ICreditFacadeV3 facade = ICreditFacadeV3(creditFacadeAddress);
+    (uint128 minDebt, uint128 maxDebt) = facade.debtLimits();
+    
+    // Ensure your planned debt is within limits
+    require(borrowAmount >= minDebt && borrowAmount <= maxDebt, "Debt out of range");
+    ```
+
+    <Note>
+      If you don't plan to borrow, you can open an account with zero debt, but you won't be able to perform most operations without debt.
+    </Note>
+  </Step>
+
+  <Step title="Approve Collateral Token">
+    The Credit Manager needs approval to transfer your collateral:
+
+    ```solidity
+    address underlying = facade.underlying();
+    address creditManager = facade.creditManager();
+    
+    IERC20(underlying).approve(creditManager, collateralAmount);
+    ```
+  </Step>
+
+  <Step title="Construct Opening Multicalls">
+    Build the array of operations to execute when opening:
+
+    ```solidity
+    MultiCall[] memory calls = new MultiCall[](2);
+    
+    // 1. Add collateral
+    calls[0] = MultiCall({
+        target: address(facade),
+        callData: abi.encodeCall(
+            ICreditFacadeV3Multicall.addCollateral,
+            (underlying, collateralAmount)
+        )
+    });
+    
+    // 2. Increase debt (borrow from pool)
+    calls[1] = MultiCall({
+        target: address(facade),
+        callData: abi.encodeCall(
+            ICreditFacadeV3Multicall.increaseDebt,
+            (borrowAmount)
+        )
+    });
+    ```
+  </Step>
+
+  <Step title="Open the Account">
+    Execute the opening transaction:
+
+    ```solidity
+    address creditAccount = facade.openCreditAccount(
+        msg.sender,      // onBehalfOf - account owner
+        calls,           // multicalls to execute
+        referralCode     // optional referral code
+    );
+    
+    emit CreditAccountOpened(creditAccount, msg.sender);
+    ```
+
+    The function returns the address of the newly created credit account.
+  </Step>
+</Steps>
+
+## Opening with Permit
+
+For ERC-2612 compliant tokens, you can avoid a separate approval transaction:
+
+```solidity
+MultiCall[] memory calls = new MultiCall[](2);
+
+// Add collateral with permit (no prior approval needed)
+calls[0] = MultiCall({
+    target: address(facade),
+    callData: abi.encodeCall(
+        ICreditFacadeV3Multicall.addCollateralWithPermit,
+        (underlying, collateralAmount, deadline, v, r, s)
+    )
+});
+
+calls[1] = MultiCall({
+    target: address(facade),
+    callData: abi.encodeCall(
+        ICreditFacadeV3Multicall.increaseDebt,
+        (borrowAmount)
+    )
+});
+
+address creditAccount = facade.openCreditAccount(msg.sender, calls, 0);
+```
+
+## Opening with Multiple Collateral Types
+
+Add multiple tokens as collateral during opening:
+
+```solidity
+MultiCall[] memory calls = new MultiCall[](4);
+
+// Add underlying token
+calls[0] = MultiCall({
+    target: address(facade),
+    callData: abi.encodeCall(
+        ICreditFacadeV3Multicall.addCollateral,
+        (underlying, underlyingAmount)
+    )
+});
+
+// Increase debt
+calls[1] = MultiCall({
+    target: address(facade),
+    callData: abi.encodeCall(
+        ICreditFacadeV3Multicall.increaseDebt,
+        (borrowAmount)
+    )
+});
+
+// Add secondary collateral (e.g., WETH)
+calls[2] = MultiCall({
+    target: address(facade),
+    callData: abi.encodeCall(
+        ICreditFacadeV3Multicall.addCollateral,
+        (weth, wethAmount)
+    )
+});
+
+// Update quota for secondary collateral
+calls[3] = MultiCall({
+    target: address(facade),
+    callData: abi.encodeCall(
+        ICreditFacadeV3Multicall.updateQuota,
+        (weth, int96(uint96(quotaAmount)), uint96(quotaAmount))
+    )
+});
+
+address creditAccount = facade.openCreditAccount(msg.sender, calls, 0);
+```
+
+<Warning>
+  Non-underlying tokens must have quota enabled to count as collateral. Holding tokens without quota while having debt puts them at risk during liquidation.
+</Warning>
+
+## Opening with ETH
+
+When the underlying token is WETH, you can open with native ETH:
+
+```solidity
+address weth = facade.weth();
+require(facade.underlying() == weth, "Not a WETH pool");
+
+MultiCall[] memory calls = new MultiCall[](2);
+
+// ETH will be automatically wrapped to WETH
+calls[0] = MultiCall({
+    target: address(facade),
+    callData: abi.encodeCall(
+        ICreditFacadeV3Multicall.addCollateral,
+        (weth, ethAmount)
+    )
+});
+
+calls[1] = MultiCall({
+    target: address(facade),
+    callData: abi.encodeCall(
+        ICreditFacadeV3Multicall.increaseDebt,
+        (borrowAmount)
+    )
+});
+
+// Send ETH with the transaction
+address creditAccount = facade.openCreditAccount{value: ethAmount}(
+    msg.sender,
+    calls,
+    0
+);
+```
+
+## Complete Example
+
+Full integration example with error handling:
+
+```solidity
+contract GearboxIntegration {
+    ICreditFacadeV3 public immutable creditFacade;
+    
+    constructor(address _creditFacade) {
+        creditFacade = ICreditFacadeV3(_creditFacade);
+    }
+    
+    function openAccount(
+        uint256 collateralAmount,
+        uint256 borrowAmount
+    ) external returns (address creditAccount) {
+        // Validate debt limits
+        (uint128 minDebt, uint128 maxDebt) = creditFacade.debtLimits();
+        require(
+            borrowAmount >= minDebt && borrowAmount <= maxDebt,
+            "Debt out of range"
+        );
+        
+        // Get addresses
+        address underlying = creditFacade.underlying();
+        address creditManager = creditFacade.creditManager();
+        
+        // Transfer and approve
+        IERC20(underlying).transferFrom(
+            msg.sender,
+            address(this),
+            collateralAmount
+        );
+        IERC20(underlying).approve(creditManager, collateralAmount);
+        
+        // Build multicalls
+        MultiCall[] memory calls = new MultiCall[](2);
+        
+        calls[0] = MultiCall({
+            target: address(creditFacade),
+            callData: abi.encodeCall(
+                ICreditFacadeV3Multicall.addCollateral,
+                (underlying, collateralAmount)
+            )
+        });
+        
+        calls[1] = MultiCall({
+            target: address(creditFacade),
+            callData: abi.encodeCall(
+                ICreditFacadeV3Multicall.increaseDebt,
+                (borrowAmount)
+            )
+        });
+        
+        // Open account
+        creditAccount = creditFacade.openCreditAccount(
+            msg.sender,
+            calls,
+            0
+        );
+    }
+}
+```
+
+## Permissions and Events
+
+When an account is opened, the `OpenCreditAccount` event is emitted:
+
+```solidity
+event OpenCreditAccount(
+    address indexed creditAccount,
+    address indexed onBehalfOf,
+    address indexed caller,
+    uint256 referralCode
+);
+```
+
+The `onBehalfOf` address becomes the account owner and has full control over it.
+
+## Available Operations During Opening
+
+The following multicall operations are permitted during account opening:
+
+- `addCollateral` - Add tokens as collateral
+- `addCollateralWithPermit` - Add collateral using EIP-2612 permit
+- `increaseDebt` - Borrow from the pool
+- `updateQuota` - Enable non-underlying tokens as collateral
+- `storeExpectedBalances` / `compareBalances` - Slippage protection
+- `onDemandPriceUpdates` - Update oracle prices (must be first call)
+- Adapter calls to interact with external protocols
+
+<Note>
+  `decreaseDebt` is not available during opening. You cannot close an account in the same transaction it's opened.
+</Note>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Managing Debt" icon="coins" href="/guides/managing-debt">
+    Learn to increase and decrease debt
+  </Card>
+  <Card title="Working with Adapters" icon="plug" href="/guides/working-with-adapters">
+    Execute DeFi operations via adapters
+  </Card>
+</CardGroup>

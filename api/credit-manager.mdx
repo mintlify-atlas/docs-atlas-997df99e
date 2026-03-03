@@ -1,0 +1,1032 @@
+---
+title: Credit Manager V3
+description: Core contract managing credit accounts, collateral checks, and debt operations
+---
+
+The Credit Manager is the core contract that manages credit accounts, handles collateral checks, debt management, and liquidations.
+
+## View Functions
+
+### pool
+
+```solidity
+function pool() external view returns (address)
+```
+
+Returns the address of the pool connected to this credit manager.
+
+<ResponseField name="pool" type="address">
+  The pool contract address
+</ResponseField>
+
+### underlying
+
+```solidity
+function underlying() external view returns (address)
+```
+
+Returns the address of the underlying token.
+
+<ResponseField name="underlying" type="address">
+  The underlying token address
+</ResponseField>
+
+### creditFacade
+
+```solidity
+function creditFacade() external view returns (address)
+```
+
+Returns the address of the credit facade.
+
+<ResponseField name="creditFacade" type="address">
+  The credit facade contract address
+</ResponseField>
+
+### creditConfigurator
+
+```solidity
+function creditConfigurator() external view returns (address)
+```
+
+Returns the address of the credit configurator.
+
+<ResponseField name="creditConfigurator" type="address">
+  The credit configurator contract address
+</ResponseField>
+
+### accountFactory
+
+```solidity
+function accountFactory() external view returns (address)
+```
+
+Returns the address of the account factory.
+
+<ResponseField name="accountFactory" type="address">
+  The account factory contract address
+</ResponseField>
+
+### priceOracle
+
+```solidity
+function priceOracle() external view returns (address)
+```
+
+Returns the address of the price oracle.
+
+<ResponseField name="priceOracle" type="address">
+  The price oracle contract address
+</ResponseField>
+
+### poolQuotaKeeper
+
+```solidity
+function poolQuotaKeeper() external view returns (address)
+```
+
+Returns the address of the pool quota keeper.
+
+<ResponseField name="poolQuotaKeeper" type="address">
+  The pool quota keeper contract address
+</ResponseField>
+
+### name
+
+```solidity
+function name() external view returns (string memory)
+```
+
+Returns the name of the credit manager.
+
+<ResponseField name="name" type="string">
+  The credit manager name
+</ResponseField>
+
+## Account Management
+
+### openCreditAccount
+
+```solidity
+function openCreditAccount(address onBehalfOf) external returns (address)
+```
+
+Opens a new credit account.
+
+<ParamField path="onBehalfOf" type="address" required>
+  The address to open the credit account for
+</ParamField>
+
+<ResponseField name="creditAccount" type="address">
+  The address of the newly created credit account
+</ResponseField>
+
+### closeCreditAccount
+
+```solidity
+function closeCreditAccount(address creditAccount) external
+```
+
+Closes a credit account.
+
+<ParamField path="creditAccount" type="address" required>
+  The credit account to close
+</ParamField>
+
+### liquidateCreditAccount
+
+```solidity
+function liquidateCreditAccount(
+    address creditAccount,
+    CollateralDebtData calldata collateralDebtData,
+    address to,
+    bool isExpired
+) external returns (uint256 remainingFunds, uint256 loss)
+```
+
+Liquidates a credit account.
+
+<ParamField path="creditAccount" type="address" required>
+  The credit account to liquidate
+</ParamField>
+
+<ParamField path="collateralDebtData" type="CollateralDebtData" required>
+  Collateral and debt data for the account
+</ParamField>
+
+<ParamField path="to" type="address" required>
+  Address to send remaining funds to
+</ParamField>
+
+<ParamField path="isExpired" type="bool" required>
+  Whether the account is being liquidated due to expiration
+</ParamField>
+
+<ResponseField name="remainingFunds" type="uint256">
+  Amount of funds remaining after liquidation
+</ResponseField>
+
+<ResponseField name="loss" type="uint256">
+  Amount of loss incurred during liquidation
+</ResponseField>
+
+### manageDebt
+
+```solidity
+function manageDebt(
+    address creditAccount,
+    uint256 amount,
+    uint256 enabledTokensMask,
+    ManageDebtAction action
+) external returns (uint256 newDebt, uint256, uint256)
+```
+
+Manages debt for a credit account (increase or decrease).
+
+<ParamField path="creditAccount" type="address" required>
+  The credit account to manage debt for
+</ParamField>
+
+<ParamField path="amount" type="uint256" required>
+  The amount to increase or decrease debt by
+</ParamField>
+
+<ParamField path="enabledTokensMask" type="uint256" required>
+  Bitmask of enabled tokens
+</ParamField>
+
+<ParamField path="action" type="ManageDebtAction" required>
+  The action to perform (INCREASE_DEBT or DECREASE_DEBT)
+</ParamField>
+
+<ResponseField name="newDebt" type="uint256">
+  The new debt amount after the operation
+</ResponseField>
+
+### addCollateral
+
+```solidity
+function addCollateral(
+    address payer,
+    address creditAccount,
+    address token,
+    uint256 amount
+) external returns (uint256)
+```
+
+Adds collateral to a credit account.
+
+<ParamField path="payer" type="address" required>
+  The address paying for the collateral
+</ParamField>
+
+<ParamField path="creditAccount" type="address" required>
+  The credit account to add collateral to
+</ParamField>
+
+<ParamField path="token" type="address" required>
+  The token to add as collateral
+</ParamField>
+
+<ParamField path="amount" type="uint256" required>
+  The amount to add
+</ParamField>
+
+<ResponseField name="tokensToEnable" type="uint256">
+  Bitmask of tokens to enable
+</ResponseField>
+
+### withdrawCollateral
+
+```solidity
+function withdrawCollateral(
+    address creditAccount,
+    address token,
+    uint256 amount,
+    address to
+) external returns (uint256)
+```
+
+Withdraws collateral from a credit account.
+
+<ParamField path="creditAccount" type="address" required>
+  The credit account to withdraw from
+</ParamField>
+
+<ParamField path="token" type="address" required>
+  The token to withdraw
+</ParamField>
+
+<ParamField path="amount" type="uint256" required>
+  The amount to withdraw
+</ParamField>
+
+<ParamField path="to" type="address" required>
+  The recipient address
+</ParamField>
+
+<ResponseField name="tokensToDisable" type="uint256">
+  Bitmask of tokens to disable
+</ResponseField>
+
+### externalCall
+
+```solidity
+function externalCall(
+    address creditAccount,
+    address target,
+    bytes calldata callData
+) external returns (bytes memory result)
+```
+
+Executes an external call from a credit account.
+
+<ParamField path="creditAccount" type="address" required>
+  The credit account making the call
+</ParamField>
+
+<ParamField path="target" type="address" required>
+  The target contract address
+</ParamField>
+
+<ParamField path="callData" type="bytes" required>
+  The call data to send
+</ParamField>
+
+<ResponseField name="result" type="bytes">
+  The result of the external call
+</ResponseField>
+
+### approveToken
+
+```solidity
+function approveToken(
+    address creditAccount,
+    address token,
+    address spender,
+    uint256 amount
+) external
+```
+
+Approves a token for spending from a credit account.
+
+<ParamField path="creditAccount" type="address" required>
+  The credit account
+</ParamField>
+
+<ParamField path="token" type="address" required>
+  The token to approve
+</ParamField>
+
+<ParamField path="spender" type="address" required>
+  The address to approve for spending
+</ParamField>
+
+<ParamField path="amount" type="uint256" required>
+  The amount to approve
+</ParamField>
+
+## Adapters
+
+### adapterToContract
+
+```solidity
+function adapterToContract(address adapter) external view returns (address targetContract)
+```
+
+Returns the target contract for an adapter.
+
+<ParamField path="adapter" type="address" required>
+  The adapter address
+</ParamField>
+
+<ResponseField name="targetContract" type="address">
+  The target contract address
+</ResponseField>
+
+### contractToAdapter
+
+```solidity
+function contractToAdapter(address targetContract) external view returns (address adapter)
+```
+
+Returns the adapter for a target contract.
+
+<ParamField path="targetContract" type="address" required>
+  The target contract address
+</ParamField>
+
+<ResponseField name="adapter" type="address">
+  The adapter address
+</ResponseField>
+
+### execute
+
+```solidity
+function execute(bytes calldata data) external returns (bytes memory result)
+```
+
+Executes an adapter call.
+
+<ParamField path="data" type="bytes" required>
+  The call data
+</ParamField>
+
+<ResponseField name="result" type="bytes">
+  The result of the execution
+</ResponseField>
+
+### approveCreditAccount
+
+```solidity
+function approveCreditAccount(address token, uint256 amount) external
+```
+
+Approves a token from the active credit account.
+
+<ParamField path="token" type="address" required>
+  The token to approve
+</ParamField>
+
+<ParamField path="amount" type="uint256" required>
+  The amount to approve
+</ParamField>
+
+### setActiveCreditAccount
+
+```solidity
+function setActiveCreditAccount(address creditAccount) external
+```
+
+Sets the active credit account for the current adapter call.
+
+<ParamField path="creditAccount" type="address" required>
+  The credit account to set as active
+</ParamField>
+
+### getActiveCreditAccountOrRevert
+
+```solidity
+function getActiveCreditAccountOrRevert() external view returns (address creditAccount)
+```
+
+Returns the active credit account, reverts if none is set.
+
+<ResponseField name="creditAccount" type="address">
+  The active credit account address
+</ResponseField>
+
+## Collateral Checks
+
+### fullCollateralCheck
+
+```solidity
+function fullCollateralCheck(
+    address creditAccount,
+    uint256 enabledTokensMask,
+    uint256[] calldata collateralHints,
+    uint16 minHealthFactor,
+    bool useSafePrices
+) external returns (uint256)
+```
+
+Performs a full collateral check on a credit account.
+
+<ParamField path="creditAccount" type="address" required>
+  The credit account to check
+</ParamField>
+
+<ParamField path="enabledTokensMask" type="uint256" required>
+  Bitmask of enabled tokens
+</ParamField>
+
+<ParamField path="collateralHints" type="uint256[]" required>
+  Optional array of token masks to check first
+</ParamField>
+
+<ParamField path="minHealthFactor" type="uint16" required>
+  Minimum health factor in basis points
+</ParamField>
+
+<ParamField path="useSafePrices" type="bool" required>
+  Whether to use safe prices from the oracle
+</ParamField>
+
+<ResponseField name="enabledTokensMask" type="uint256">
+  Updated enabled tokens mask
+</ResponseField>
+
+### isLiquidatable
+
+```solidity
+function isLiquidatable(
+    address creditAccount,
+    uint16 minHealthFactor
+) external view returns (bool)
+```
+
+Checks if a credit account is liquidatable.
+
+<ParamField path="creditAccount" type="address" required>
+  The credit account to check
+</ParamField>
+
+<ParamField path="minHealthFactor" type="uint16" required>
+  Minimum health factor in basis points
+</ParamField>
+
+<ResponseField name="liquidatable" type="bool">
+  Whether the account is liquidatable
+</ResponseField>
+
+### calcDebtAndCollateral
+
+```solidity
+function calcDebtAndCollateral(
+    address creditAccount,
+    CollateralCalcTask task
+) external view returns (CollateralDebtData memory cdd)
+```
+
+Calculates debt and collateral data for a credit account.
+
+<ParamField path="creditAccount" type="address" required>
+  The credit account to calculate for
+</ParamField>
+
+<ParamField path="task" type="CollateralCalcTask" required>
+  The calculation task to perform
+</ParamField>
+
+<ResponseField name="cdd" type="CollateralDebtData">
+  The calculated collateral and debt data
+</ResponseField>
+
+## Quotas
+
+### quotedTokensMask
+
+```solidity
+function quotedTokensMask() external view returns (uint256)
+```
+
+Returns the bitmask of quoted tokens.
+
+<ResponseField name="quotedTokensMask" type="uint256">
+  Bitmask of tokens with quotas enabled
+</ResponseField>
+
+### updateQuota
+
+```solidity
+function updateQuota(
+    address creditAccount,
+    address token,
+    int96 quotaChange,
+    uint96 minQuota,
+    uint96 maxQuota
+) external returns (uint256 tokensToEnable, uint256 tokensToDisable)
+```
+
+Updates the quota for a token on a credit account.
+
+<ParamField path="creditAccount" type="address" required>
+  The credit account to update quota for
+</ParamField>
+
+<ParamField path="token" type="address" required>
+  The token to update quota for
+</ParamField>
+
+<ParamField path="quotaChange" type="int96" required>
+  The change in quota (can be negative)
+</ParamField>
+
+<ParamField path="minQuota" type="uint96" required>
+  Minimum quota required
+</ParamField>
+
+<ParamField path="maxQuota" type="uint96" required>
+  Maximum quota allowed
+</ParamField>
+
+<ResponseField name="tokensToEnable" type="uint256">
+  Bitmask of tokens to enable
+</ResponseField>
+
+<ResponseField name="tokensToDisable" type="uint256">
+  Bitmask of tokens to disable
+</ResponseField>
+
+## Credit Manager Parameters
+
+### maxEnabledTokens
+
+```solidity
+function maxEnabledTokens() external view returns (uint8)
+```
+
+Returns the maximum number of enabled tokens allowed per account.
+
+<ResponseField name="maxEnabledTokens" type="uint8">
+  Maximum number of enabled tokens
+</ResponseField>
+
+### fees
+
+```solidity
+function fees() external view returns (
+    uint16 feeInterest,
+    uint16 feeLiquidation,
+    uint16 liquidationDiscount,
+    uint16 feeLiquidationExpired,
+    uint16 liquidationDiscountExpired
+)
+```
+
+Returns the fee parameters.
+
+<ResponseField name="feeInterest" type="uint16">
+  Interest fee in basis points
+</ResponseField>
+
+<ResponseField name="feeLiquidation" type="uint16">
+  Liquidation fee in basis points
+</ResponseField>
+
+<ResponseField name="liquidationDiscount" type="uint16">
+  Liquidation discount in basis points
+</ResponseField>
+
+<ResponseField name="feeLiquidationExpired" type="uint16">
+  Expired liquidation fee in basis points
+</ResponseField>
+
+<ResponseField name="liquidationDiscountExpired" type="uint16">
+  Expired liquidation discount in basis points
+</ResponseField>
+
+### collateralTokensCount
+
+```solidity
+function collateralTokensCount() external view returns (uint8)
+```
+
+Returns the number of collateral tokens.
+
+<ResponseField name="count" type="uint8">
+  Number of collateral tokens
+</ResponseField>
+
+### getTokenMaskOrRevert
+
+```solidity
+function getTokenMaskOrRevert(address token) external view returns (uint256 tokenMask)
+```
+
+Returns the token mask for a token, reverts if token is not recognized.
+
+<ParamField path="token" type="address" required>
+  The token address
+</ParamField>
+
+<ResponseField name="tokenMask" type="uint256">
+  The token's bitmask
+</ResponseField>
+
+### getTokenByMask
+
+```solidity
+function getTokenByMask(uint256 tokenMask) external view returns (address token)
+```
+
+Returns the token address for a token mask.
+
+<ParamField path="tokenMask" type="uint256" required>
+  The token mask
+</ParamField>
+
+<ResponseField name="token" type="address">
+  The token address
+</ResponseField>
+
+### liquidationThresholds
+
+```solidity
+function liquidationThresholds(address token) external view returns (uint16 lt)
+```
+
+Returns the liquidation threshold for a token.
+
+<ParamField path="token" type="address" required>
+  The token address
+</ParamField>
+
+<ResponseField name="lt" type="uint16">
+  Liquidation threshold in basis points
+</ResponseField>
+
+### ltParams
+
+```solidity
+function ltParams(address token) external view returns (
+    uint16 ltInitial,
+    uint16 ltFinal,
+    uint40 timestampRampStart,
+    uint24 rampDuration
+)
+```
+
+Returns liquidation threshold ramping parameters for a token.
+
+<ParamField path="token" type="address" required>
+  The token address
+</ParamField>
+
+<ResponseField name="ltInitial" type="uint16">
+  Initial liquidation threshold
+</ResponseField>
+
+<ResponseField name="ltFinal" type="uint16">
+  Final liquidation threshold
+</ResponseField>
+
+<ResponseField name="timestampRampStart" type="uint40">
+  Timestamp when ramping starts
+</ResponseField>
+
+<ResponseField name="rampDuration" type="uint24">
+  Duration of the ramp in seconds
+</ResponseField>
+
+### collateralTokenByMask
+
+```solidity
+function collateralTokenByMask(uint256 tokenMask) external view returns (
+    address token,
+    uint16 liquidationThreshold
+)
+```
+
+Returns the collateral token and liquidation threshold for a token mask.
+
+<ParamField path="tokenMask" type="uint256" required>
+  The token mask
+</ParamField>
+
+<ResponseField name="token" type="address">
+  The token address
+</ResponseField>
+
+<ResponseField name="liquidationThreshold" type="uint16">
+  Liquidation threshold in basis points
+</ResponseField>
+
+## Account Info
+
+### creditAccountInfo
+
+```solidity
+function creditAccountInfo(address creditAccount) external view returns (
+    uint256 debt,
+    uint256 cumulativeIndexLastUpdate,
+    uint128 cumulativeQuotaInterest,
+    uint128 quotaFees,
+    uint256 enabledTokensMask,
+    uint16 flags,
+    uint64 lastDebtUpdate,
+    address borrower
+)
+```
+
+Returns comprehensive information about a credit account.
+
+<ParamField path="creditAccount" type="address" required>
+  The credit account address
+</ParamField>
+
+<ResponseField name="debt" type="uint256">
+  Current debt amount
+</ResponseField>
+
+<ResponseField name="cumulativeIndexLastUpdate" type="uint256">
+  Cumulative index at last update
+</ResponseField>
+
+<ResponseField name="cumulativeQuotaInterest" type="uint128">
+  Cumulative quota interest
+</ResponseField>
+
+<ResponseField name="quotaFees" type="uint128">
+  Quota fees
+</ResponseField>
+
+<ResponseField name="enabledTokensMask" type="uint256">
+  Bitmask of enabled tokens
+</ResponseField>
+
+<ResponseField name="flags" type="uint16">
+  Account flags
+</ResponseField>
+
+<ResponseField name="lastDebtUpdate" type="uint64">
+  Timestamp of last debt update
+</ResponseField>
+
+<ResponseField name="borrower" type="address">
+  Address of the account borrower
+</ResponseField>
+
+### getBorrowerOrRevert
+
+```solidity
+function getBorrowerOrRevert(address creditAccount) external view returns (address borrower)
+```
+
+Returns the borrower address for a credit account, reverts if account doesn't exist.
+
+<ParamField path="creditAccount" type="address" required>
+  The credit account address
+</ParamField>
+
+<ResponseField name="borrower" type="address">
+  The borrower address
+</ResponseField>
+
+### flagsOf
+
+```solidity
+function flagsOf(address creditAccount) external view returns (uint16)
+```
+
+Returns the flags for a credit account.
+
+<ParamField path="creditAccount" type="address" required>
+  The credit account address
+</ParamField>
+
+<ResponseField name="flags" type="uint16">
+  Account flags
+</ResponseField>
+
+### setFlagFor
+
+```solidity
+function setFlagFor(
+    address creditAccount,
+    uint16 flag,
+    bool value
+) external
+```
+
+Sets a flag for a credit account.
+
+<ParamField path="creditAccount" type="address" required>
+  The credit account address
+</ParamField>
+
+<ParamField path="flag" type="uint16" required>
+  The flag to set
+</ParamField>
+
+<ParamField path="value" type="bool" required>
+  Whether to enable or disable the flag
+</ParamField>
+
+### enabledTokensMaskOf
+
+```solidity
+function enabledTokensMaskOf(address creditAccount) external view returns (uint256)
+```
+
+Returns the enabled tokens mask for a credit account.
+
+<ParamField path="creditAccount" type="address" required>
+  The credit account address
+</ParamField>
+
+<ResponseField name="enabledTokensMask" type="uint256">
+  Bitmask of enabled tokens
+</ResponseField>
+
+### creditAccounts
+
+```solidity
+function creditAccounts() external view returns (address[] memory)
+```
+
+Returns all credit accounts.
+
+<ResponseField name="accounts" type="address[]">
+  Array of all credit account addresses
+</ResponseField>
+
+```solidity
+function creditAccounts(
+    uint256 offset,
+    uint256 limit
+) external view returns (address[] memory)
+```
+
+Returns a paginated list of credit accounts.
+
+<ParamField path="offset" type="uint256" required>
+  The starting index
+</ParamField>
+
+<ParamField path="limit" type="uint256" required>
+  The maximum number of accounts to return
+</ParamField>
+
+<ResponseField name="accounts" type="address[]">
+  Array of credit account addresses
+</ResponseField>
+
+### creditAccountsLen
+
+```solidity
+function creditAccountsLen() external view returns (uint256)
+```
+
+Returns the total number of credit accounts.
+
+<ResponseField name="length" type="uint256">
+  Total number of credit accounts
+</ResponseField>
+
+## Configuration
+
+### addToken
+
+```solidity
+function addToken(address token) external
+```
+
+Adds a new collateral token.
+
+<ParamField path="token" type="address" required>
+  The token to add
+</ParamField>
+
+### setCollateralTokenData
+
+```solidity
+function setCollateralTokenData(
+    address token,
+    uint16 ltInitial,
+    uint16 ltFinal,
+    uint40 timestampRampStart,
+    uint24 rampDuration
+) external
+```
+
+Sets collateral token data including liquidation threshold ramping.
+
+<ParamField path="token" type="address" required>
+  The token address
+</ParamField>
+
+<ParamField path="ltInitial" type="uint16" required>
+  Initial liquidation threshold
+</ParamField>
+
+<ParamField path="ltFinal" type="uint16" required>
+  Final liquidation threshold
+</ParamField>
+
+<ParamField path="timestampRampStart" type="uint40" required>
+  Timestamp when ramping starts
+</ParamField>
+
+<ParamField path="rampDuration" type="uint24" required>
+  Duration of the ramp in seconds
+</ParamField>
+
+### setFees
+
+```solidity
+function setFees(
+    uint16 feeInterest,
+    uint16 feeLiquidation,
+    uint16 liquidationDiscount,
+    uint16 feeLiquidationExpired,
+    uint16 liquidationDiscountExpired
+) external
+```
+
+Sets fee parameters.
+
+<ParamField path="feeInterest" type="uint16" required>
+  Interest fee in basis points
+</ParamField>
+
+<ParamField path="feeLiquidation" type="uint16" required>
+  Liquidation fee in basis points
+</ParamField>
+
+<ParamField path="liquidationDiscount" type="uint16" required>
+  Liquidation discount in basis points
+</ParamField>
+
+<ParamField path="feeLiquidationExpired" type="uint16" required>
+  Expired liquidation fee in basis points
+</ParamField>
+
+<ParamField path="liquidationDiscountExpired" type="uint16" required>
+  Expired liquidation discount in basis points
+</ParamField>
+
+### setContractAllowance
+
+```solidity
+function setContractAllowance(
+    address adapter,
+    address targetContract
+) external
+```
+
+Sets contract allowance for an adapter.
+
+<ParamField path="adapter" type="address" required>
+  The adapter address
+</ParamField>
+
+<ParamField path="targetContract" type="address" required>
+  The target contract address
+</ParamField>
+
+### setCreditFacade
+
+```solidity
+function setCreditFacade(address creditFacade) external
+```
+
+Sets the credit facade address.
+
+<ParamField path="creditFacade" type="address" required>
+  The new credit facade address
+</ParamField>
+
+### setPriceOracle
+
+```solidity
+function setPriceOracle(address priceOracle) external
+```
+
+Sets the price oracle address.
+
+<ParamField path="priceOracle" type="address" required>
+  The new price oracle address
+</ParamField>
+
+### setCreditConfigurator
+
+```solidity
+function setCreditConfigurator(address creditConfigurator) external
+```
+
+Sets the credit configurator address.
+
+<ParamField path="creditConfigurator" type="address" required>
+  The new credit configurator address
+</ParamField>

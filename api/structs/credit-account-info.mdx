@@ -1,0 +1,64 @@
+---
+title: CreditAccountInfo
+description: Struct containing core information about a credit account
+---
+
+The `CreditAccountInfo` struct contains essential information about a credit account's state.
+
+## Struct Definition
+
+```solidity
+struct CreditAccountInfo {
+    uint256 debt;
+    uint256 cumulativeIndexLastUpdate;
+    uint128 cumulativeQuotaInterest;
+    uint128 quotaFees;
+    uint256 enabledTokensMask;
+    uint16 flags;
+    uint64 lastDebtUpdate;
+    address borrower;
+}
+```
+
+## Fields
+
+<ParamField path="debt" type="uint256">
+  Current debt principal amount (excluding accrued interest and fees)
+</ParamField>
+
+<ParamField path="cumulativeIndexLastUpdate" type="uint256">
+  Cumulative base interest index at the time of last debt update in ray units. Used to calculate accrued base interest.
+</ParamField>
+
+<ParamField path="cumulativeQuotaInterest" type="uint128">
+  Cumulative quota interest accrued by the account. This value increases over time based on quota usage.
+</ParamField>
+
+<ParamField path="quotaFees" type="uint128">
+  Quota fees owed by the account
+</ParamField>
+
+<ParamField path="enabledTokensMask" type="uint256">
+  Bitmask representing which tokens are currently enabled as collateral on this account. Each bit corresponds to a token.
+</ParamField>
+
+<ParamField path="flags" type="uint16">
+  Flags bitmap for account state (e.g., special permissions or status indicators)
+</ParamField>
+
+<ParamField path="lastDebtUpdate" type="uint64">
+  Block number of the last debt update. Used to prevent multiple debt updates in the same block.
+</ParamField>
+
+<ParamField path="borrower" type="address">
+  Address of the account owner/borrower
+</ParamField>
+
+## Usage
+
+This struct is returned by `ICreditManagerV3.creditAccountInfo()` and provides a snapshot of a credit account's current state. It's useful for:
+
+- Checking account ownership
+- Viewing current debt (need to calculate accrued interest separately)
+- Seeing which tokens are enabled as collateral
+- Determining when the account last updated its debt

@@ -1,0 +1,446 @@
+---
+title: Credit Facade V3
+description: User-facing contract for managing credit accounts and executing multicalls
+---
+
+The Credit Facade is the user-facing contract that handles credit account operations including opening, closing, liquidation, and multicall execution.
+
+## View Functions
+
+### creditManager
+
+```solidity
+function creditManager() external view returns (address)
+```
+
+Returns the address of the credit manager.
+
+<ResponseField name="creditManager" type="address">
+  The credit manager contract address
+</ResponseField>
+
+### underlying
+
+```solidity
+function underlying() external view returns (address)
+```
+
+Returns the address of the underlying token.
+
+<ResponseField name="underlying" type="address">
+  The underlying token address
+</ResponseField>
+
+### treasury
+
+```solidity
+function treasury() external view returns (address)
+```
+
+Returns the treasury address.
+
+<ResponseField name="treasury" type="address">
+  The treasury address
+</ResponseField>
+
+### priceFeedStore
+
+```solidity
+function priceFeedStore() external view returns (address)
+```
+
+Returns the price feed store address.
+
+<ResponseField name="priceFeedStore" type="address">
+  The price feed store contract address
+</ResponseField>
+
+### degenNFT
+
+```solidity
+function degenNFT() external view returns (address)
+```
+
+Returns the degen NFT address.
+
+<ResponseField name="degenNFT" type="address">
+  The degen NFT contract address
+</ResponseField>
+
+### weth
+
+```solidity
+function weth() external view returns (address)
+```
+
+Returns the WETH address.
+
+<ResponseField name="weth" type="address">
+  The WETH token address
+</ResponseField>
+
+### botList
+
+```solidity
+function botList() external view returns (address)
+```
+
+Returns the bot list address.
+
+<ResponseField name="botList" type="address">
+  The bot list contract address
+</ResponseField>
+
+### maxDebtPerBlockMultiplier
+
+```solidity
+function maxDebtPerBlockMultiplier() external view returns (uint8)
+```
+
+Returns the max debt per block multiplier.
+
+<ResponseField name="multiplier" type="uint8">
+  The multiplier value
+</ResponseField>
+
+### maxQuotaMultiplier
+
+```solidity
+function maxQuotaMultiplier() external view returns (uint256)
+```
+
+Returns the max quota multiplier.
+
+<ResponseField name="multiplier" type="uint256">
+  The multiplier value
+</ResponseField>
+
+### expirable
+
+```solidity
+function expirable() external view returns (bool)
+```
+
+Returns whether the credit facade is expirable.
+
+<ResponseField name="expirable" type="bool">
+  True if the facade can expire
+</ResponseField>
+
+### expirationDate
+
+```solidity
+function expirationDate() external view returns (uint40)
+```
+
+Returns the expiration date timestamp.
+
+<ResponseField name="expirationDate" type="uint40">
+  Unix timestamp of expiration
+</ResponseField>
+
+### debtLimits
+
+```solidity
+function debtLimits() external view returns (uint128 minDebt, uint128 maxDebt)
+```
+
+Returns the debt limits.
+
+<ResponseField name="minDebt" type="uint128">
+  Minimum debt per credit account
+</ResponseField>
+
+<ResponseField name="maxDebt" type="uint128">
+  Maximum debt per credit account
+</ResponseField>
+
+### lossPolicy
+
+```solidity
+function lossPolicy() external view returns (address)
+```
+
+Returns the loss policy address.
+
+<ResponseField name="lossPolicy" type="address">
+  The loss policy contract address
+</ResponseField>
+
+### forbiddenTokenMask
+
+```solidity
+function forbiddenTokenMask() external view returns (uint256)
+```
+
+Returns the forbidden token mask.
+
+<ResponseField name="forbiddenTokenMask" type="uint256">
+  Bitmask of forbidden tokens
+</ResponseField>
+
+## Account Management
+
+### openCreditAccount
+
+```solidity
+function openCreditAccount(
+    address onBehalfOf,
+    MultiCall[] calldata calls,
+    uint256 referralCode
+) external payable returns (address creditAccount)
+```
+
+Opens a new credit account and executes a multicall.
+
+<ParamField path="onBehalfOf" type="address" required>
+  The address to open the account for
+</ParamField>
+
+<ParamField path="calls" type="MultiCall[]" required>
+  Array of multicall operations to execute
+</ParamField>
+
+<ParamField path="referralCode" type="uint256" required>
+  Referral code for tracking
+</ParamField>
+
+<ResponseField name="creditAccount" type="address">
+  The address of the newly opened credit account
+</ResponseField>
+
+### closeCreditAccount
+
+```solidity
+function closeCreditAccount(
+    address creditAccount,
+    MultiCall[] calldata calls
+) external payable
+```
+
+Closes a credit account after executing a multicall.
+
+<ParamField path="creditAccount" type="address" required>
+  The credit account to close
+</ParamField>
+
+<ParamField path="calls" type="MultiCall[]" required>
+  Array of multicall operations to execute before closing
+</ParamField>
+
+### liquidateCreditAccount
+
+```solidity
+function liquidateCreditAccount(
+    address creditAccount,
+    address to,
+    MultiCall[] calldata calls,
+    bytes memory lossPolicyData
+) external
+```
+
+Liquidates a credit account with loss policy data.
+
+<ParamField path="creditAccount" type="address" required>
+  The credit account to liquidate
+</ParamField>
+
+<ParamField path="to" type="address" required>
+  Address to send remaining funds to
+</ParamField>
+
+<ParamField path="calls" type="MultiCall[]" required>
+  Array of multicall operations to execute during liquidation
+</ParamField>
+
+<ParamField path="lossPolicyData" type="bytes" required>
+  Data for the loss policy
+</ParamField>
+
+```solidity
+function liquidateCreditAccount(
+    address creditAccount,
+    address to,
+    MultiCall[] calldata calls
+) external
+```
+
+Liquidates a credit account without loss policy data.
+
+<ParamField path="creditAccount" type="address" required>
+  The credit account to liquidate
+</ParamField>
+
+<ParamField path="to" type="address" required>
+  Address to send remaining funds to
+</ParamField>
+
+<ParamField path="calls" type="MultiCall[]" required>
+  Array of multicall operations to execute during liquidation
+</ParamField>
+
+### partiallyLiquidateCreditAccount
+
+```solidity
+function partiallyLiquidateCreditAccount(
+    address creditAccount,
+    address token,
+    uint256 repaidAmount,
+    uint256 minSeizedAmount,
+    address to,
+    PriceUpdate[] calldata priceUpdates
+) external returns (uint256 seizedAmount)
+```
+
+Partially liquidates a credit account by repaying debt and seizing collateral.
+
+<ParamField path="creditAccount" type="address" required>
+  The credit account to partially liquidate
+</ParamField>
+
+<ParamField path="token" type="address" required>
+  The collateral token to seize
+</ParamField>
+
+<ParamField path="repaidAmount" type="uint256" required>
+  Amount of debt to repay
+</ParamField>
+
+<ParamField path="minSeizedAmount" type="uint256" required>
+  Minimum amount of collateral to seize
+</ParamField>
+
+<ParamField path="to" type="address" required>
+  Address to send seized collateral to
+</ParamField>
+
+<ParamField path="priceUpdates" type="PriceUpdate[]" required>
+  Array of price updates to apply
+</ParamField>
+
+<ResponseField name="seizedAmount" type="uint256">
+  Amount of collateral seized
+</ResponseField>
+
+### multicall
+
+```solidity
+function multicall(
+    address creditAccount,
+    MultiCall[] calldata calls
+) external payable
+```
+
+Executes a multicall on a credit account.
+
+<ParamField path="creditAccount" type="address" required>
+  The credit account to execute on
+</ParamField>
+
+<ParamField path="calls" type="MultiCall[]" required>
+  Array of multicall operations to execute
+</ParamField>
+
+### botMulticall
+
+```solidity
+function botMulticall(
+    address creditAccount,
+    MultiCall[] calldata calls
+) external
+```
+
+Executes a multicall on a credit account as a bot.
+
+<ParamField path="creditAccount" type="address" required>
+  The credit account to execute on
+</ParamField>
+
+<ParamField path="calls" type="MultiCall[]" required>
+  Array of multicall operations to execute
+</ParamField>
+
+## Configuration
+
+### setExpirationDate
+
+```solidity
+function setExpirationDate(uint40 newExpirationDate) external
+```
+
+Sets a new expiration date.
+
+<ParamField path="newExpirationDate" type="uint40" required>
+  New expiration timestamp
+</ParamField>
+
+### setDebtLimits
+
+```solidity
+function setDebtLimits(
+    uint128 newMinDebt,
+    uint128 newMaxDebt,
+    uint8 newMaxDebtPerBlockMultiplier
+) external
+```
+
+Sets new debt limits and max debt per block multiplier.
+
+<ParamField path="newMinDebt" type="uint128" required>
+  New minimum debt
+</ParamField>
+
+<ParamField path="newMaxDebt" type="uint128" required>
+  New maximum debt
+</ParamField>
+
+<ParamField path="newMaxDebtPerBlockMultiplier" type="uint8" required>
+  New max debt per block multiplier
+</ParamField>
+
+### setLossPolicy
+
+```solidity
+function setLossPolicy(address newLossPolicy) external
+```
+
+Sets a new loss policy.
+
+<ParamField path="newLossPolicy" type="address" required>
+  New loss policy contract address
+</ParamField>
+
+### setTokenAllowance
+
+```solidity
+function setTokenAllowance(
+    address token,
+    AllowanceAction allowance
+) external
+```
+
+Sets token allowance (forbid or allow).
+
+<ParamField path="token" type="address" required>
+  The token address
+</ParamField>
+
+<ParamField path="allowance" type="AllowanceAction" required>
+  The allowance action (FORBID or ALLOW)
+</ParamField>
+
+### pause
+
+```solidity
+function pause() external
+```
+
+Pauses the credit facade.
+
+### unpause
+
+```solidity
+function unpause() external
+```
+
+Unpauses the credit facade.

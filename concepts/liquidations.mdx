@@ -1,0 +1,655 @@
+---
+title: Liquidations
+description: Understanding liquidation mechanics, incentives, and protection strategies in Gearbox Protocol V3
+---
+
+Liquidations are the mechanism by which undercollateralized credit accounts are closed to protect lenders. When an account's health factor falls below 100%, liquidators can step in to repay the debt and seize collateral, earning a premium for their service.
+
+## Liquidation Conditions
+
+### When Can Accounts Be Liquidated?
+
+An account becomes liquidatable when:
+
+```solidity
+healthFactor = (twvUSD * 10000) / totalDebtUSD < 10000
+```
+
+Or equivalently:
+
+```solidity
+twvUSD < totalDebtUSD
+```
+
+Where:
+- `twvUSD`: Total weighted value (collateral × liquidation thresholds × quota limits)
+- `totalDebtUSD`: Total debt including principal, base interest, quota interest, and fees
+
+**Checking Liquidatability:**
+
+```solidity
+function isLiquidatable(address creditAccount, uint16 minHealthFactor) 
+    external view returns (bool);
+```
+
+This performs a collateral check and returns true if:
+```solidity
+healthFactor < minHealthFactor
+```
+
+For liquidation eligibility, `minHealthFactor = 10000` (100%).
+
+<Info>
+Accounts can be liquidated as soon as health factor drops below 100%, even by a tiny amount. There's no grace period or buffer.
+</Info>
+
+## Liquidation Types
+
+### Full Liquidation
+
+Full liquidation closes the entire account:
+
+```solidity
+function liquidateCreditAccount(
+    address creditAccount,
+    address to,
+    MultiCall[] calldata calls
+) external;
+
+// With loss policy
+function liquidateCreditAccount(
+    address creditAccount,
+    address to,
+    MultiCall[] calldata calls,
+    bytes memory lossPolicyData
+) external;
+```
+
+**Liquidation Flow:**
+
+1. **Verify Liquidatable**: Check that health factor < 100%
+2. **Calculate Debt**: Compute total debt with all interest and fees
+3. **Execute Multicalls**: Allow liquidator to perform operations:
+   ```solidity
+   uint192 constant LIQUIDATE_CREDIT_ACCOUNT_PERMISSIONS =
+       EXTERNAL_CALLS_PERMISSION |
+       ADD_COLLATERAL_PERMISSION |
+       WITHDRAW_COLLATERAL_PERMISSION;
+   ```
+4. **Calculate Payments**: Determine amounts to pool, treasury, and liquidator
+5. **Transfer Funds**: Send payments to appropriate recipients
+6. **Close Account**: Return account to factory
+7. **Emit Event**: Log liquidation details
+
+**Available Operations:**
+- ✅ External calls to adapters (swap collateral)
+- ✅ Add collateral (liquidator can add funds)
+- ✅ Withdraw collateral (liquidator extracts profit)
+- ❌ Increase debt (cannot borrow during liquidation)
+- ❌ Decrease debt (handled automatically)
+- ❌ Update quota (not needed during liquidation)
+
+### Partial Liquidation
+
+Partial liquidation allows targeted repayment:
+
+```solidity
+function partiallyLiquidateCreditAccount(
+    address creditAccount,
+    address token,
+    uint256 repaidAmount,
+    uint256 minSeizedAmount,
+    address to,
+    PriceUpdate[] calldata priceUpdates
+) external returns (uint256 seizedAmount);
+```
+
+**Parameters:**
+- `creditAccount`: The account to partially liquidate
+- `token`: Collateral token to seize
+- `repaidAmount`: Amount of underlying to repay
+- `minSeizedAmount`: Minimum collateral to receive (slippage protection)
+- `to`: Recipient of seized collateral
+- `priceUpdates`: Optional on-demand price updates
+
+**Partial Liquidation Flow:**
+
+1. **Verify Liquidatable**: Account must have HF < 100%
+2. **Transfer Repayment**: Liquidator sends `repaidAmount` in underlying
+3. **Calculate Seized Amount**:
+   ```solidity
+   // Value of repayment in USD
+   repaidUSD = repaidAmount * underlyingPrice;
+   
+   // Collateral to seize (with liquidation premium)
+   seizedUSD = repaidUSD / liquidationDiscount;
+   seizedAmount = seizedUSD / tokenPrice;
+   ```
+4. **Apply Fee**: Deduct protocol liquidation fee from seized amount
+5. **Transfer Collateral**: Send seized tokens to liquidator
+6. **Update Debt**: Decrease account debt by `repaidAmount`
+7. **Verify Health**: Account must remain liquidatable or become healthy
+
+<Note>
+Partial liquidations must either:
+- Restore account health factor to ≥ 100%, or
+- Leave account still liquidatable
+
+They cannot leave an account in a "zombie" state that's unhealthy but not liquidatable.
+</Note>
+
+## Liquidation Economics
+
+### Liquidation Parameters
+
+Each credit manager has liquidation parameters:
+
+```solidity
+function fees() external view returns (
+    uint16 feeInterest,
+    uint16 feeLiquidation,
+    uint16 liquidationDiscount,
+    uint16 feeLiquidationExpired,
+    uint16 liquidationDiscountExpired
+);
+```
+
+**Standard Liquidation:**
+- `feeLiquidation`: Protocol fee on collateral value (e.g., 1% = 100 bps)
+- `liquidationDiscount`: Collateral discount (e.g., 95% = 9500 bps)
+  - Discount = 1 - Premium
+  - 95% discount = 5% premium to liquidator
+
+**Expired Liquidation:**
+- `feeLiquidationExpired`: Higher fee for expired accounts
+- `liquidationDiscountExpired`: Lower discount (higher premium) for expired accounts
+- Used when credit facade has passed expiration date
+
+### Payment Calculation
+
+Liquidation payments are calculated using the `calcLiquidationPayments` function:
+
+```solidity
+function calcLiquidationPayments(
+    CollateralDebtData memory collateralDebtData,
+    uint16 feeLiquidation,
+    uint16 liquidationDiscount,
+    function (uint256) view returns (uint256) amountWithFeeFn,
+    function (uint256) view returns (uint256) amountMinusFeeFn
+) internal view returns (
+    uint256 amountToPool,
+    uint256 remainingFunds,
+    uint256 profit,
+    uint256 loss
+)
+```
+
+**Step-by-Step:**
+
+1. **Total Debt**:
+   ```solidity
+   totalDebt = debt + accruedInterest + accruedFees;
+   ```
+
+2. **Liquidation Fee**:
+   ```solidity
+   liquidationFee = totalValue * feeLiquidation / PERCENTAGE_FACTOR;
+   ```
+
+3. **Available Funds** (after premium to liquidator):
+   ```solidity
+   availableFunds = totalValue * liquidationDiscount / PERCENTAGE_FACTOR;
+   ```
+
+4. **Amount to Pool**:
+   ```solidity
+   amountToPool = totalDebt + liquidationFee;
+   amountToPoolWithFee = amountWithFeeFn(amountToPool);  // Handle fee-on-transfer
+   ```
+
+5. **Determine Outcome**:
+   ```solidity
+   if (availableFunds > amountToPoolWithFee) {
+       // Profitable liquidation
+       remainingFunds = availableFunds - amountToPoolWithFee;
+       profit = amountToPool - (debt + accruedInterest);
+   } else {
+       // Insufficient funds
+       amountToPool = amountMinusFeeFn(availableFunds);
+       
+       if (amountToPool >= debt + accruedInterest) {
+           profit = amountToPool - (debt + accruedInterest);
+       } else {
+           loss = (debt + accruedInterest) - amountToPool;
+       }
+   }
+   ```
+
+### Liquidation Examples
+
+<AccordionGroup>
+  <Accordion title="Example 1: Profitable Liquidation">
+    **Initial State:**
+    - Debt: $9,000 (principal: $8,000, interest: $1,000)
+    - Collateral: $10,000
+    - Liquidation fee: 1%
+    - Liquidation discount: 95% (5% premium)
+    - Health factor: 85% (liquidatable)
+
+    **Calculation:**
+    ```
+    Total Debt = $9,000
+    Liquidation Fee = $10,000 * 0.01 = $100
+    Amount to Pool = $9,000 + $100 = $9,100
+    
+    Available Funds = $10,000 * 0.95 = $9,500
+    
+    Since $9,500 > $9,100:
+    - Pool receives: $9,100
+    - Remaining to borrower: $9,500 - $9,100 = $400
+    - Protocol profit: $1,000 (interest) + $100 (fee) = $1,100
+    - Liquidator profit: $10,000 * 0.05 = $500
+    ```
+
+    **Outcome:**
+    - ✅ Pool fully repaid
+    - ✅ Protocol earns fees
+    - ✅ Liquidator earns $500
+    - ✅ Borrower receives $400 back
+  </Accordion>
+
+  <Accordion title="Example 2: Break-Even Liquidation">
+    **Initial State:**
+    - Debt: $9,500 (principal: $9,000, interest: $500)
+    - Collateral: $10,000
+    - Liquidation fee: 1%
+    - Liquidation discount: 95%
+    - Health factor: 90%
+
+    **Calculation:**
+    ```
+    Total Debt = $9,500
+    Liquidation Fee = $10,000 * 0.01 = $100
+    Amount to Pool = $9,500 + $100 = $9,600
+    
+    Available Funds = $10,000 * 0.95 = $9,500
+    
+    Since $9,500 < $9,600:
+    - Available funds insufficient
+    - Pool receives: $9,500
+    - Debt + Interest = $9,500
+    - Profit = $0
+    - Loss = $0
+    ```
+
+    **Outcome:**
+    - ✅ Pool recovers debt + interest
+    - ❌ Protocol loses liquidation fee
+    - ✅ Liquidator earns $500
+    - ❌ Borrower receives nothing
+  </Accordion>
+
+  <Accordion title="Example 3: Underwater Liquidation">
+    **Initial State:**
+    - Debt: $9,800 (principal: $9,000, interest: $800)
+    - Collateral: $10,000
+    - Liquidation fee: 1%
+    - Liquidation discount: 95%
+    - Health factor: 98%
+
+    **Calculation:**
+    ```
+    Total Debt = $9,800
+    Liquidation Fee = $10,000 * 0.01 = $100
+    Amount to Pool = $9,800 + $100 = $9,900
+    
+    Available Funds = $10,000 * 0.95 = $9,500
+    
+    Pool receives: $9,500
+    Debt + Interest = $9,800
+    Loss = $9,800 - $9,500 = $300
+    ```
+
+    **Outcome:**
+    - ⚠️ Pool incurs $300 loss
+    - ❌ Protocol earns nothing
+    - ✅ Liquidator earns $500
+    - ❌ Borrower receives nothing
+    
+    **Loss Handling:**
+    1. Attempt to cover loss by burning treasury shares
+    2. If treasury shares insufficient, pool incurs bad debt
+    3. Bad debt dilutes all LPs proportionally
+  </Accordion>
+
+  <Accordion title="Example 4: Severe Undercollateralization">
+    **Initial State:**
+    - Debt: $9,500
+    - Collateral: $8,000 (market crash)
+    - Liquidation fee: 1%
+    - Liquidation discount: 95%
+    - Health factor: 84% (very underwater)
+
+    **Calculation:**
+    ```
+    Total Debt = $9,500
+    Available Funds = $8,000 * 0.95 = $7,600
+    
+    Pool receives: $7,600
+    Loss = $9,500 - $7,600 = $1,900
+    ```
+
+    **Outcome:**
+    - ⚠️ Pool incurs $1,900 loss
+    - ❌ Substantial bad debt
+    - ✅ Liquidator earns $400
+    - ❌ Borrower loses everything
+    
+    This scenario demonstrates why:
+    - LPs face tail risk
+    - Treasury shares provide first-loss buffer
+    - Conservative LTs are crucial
+    - Liquidations must happen quickly
+  </Accordion>
+</AccordionGroup>
+
+## Liquidator Operations
+
+### Liquidation Strategies
+
+Liquidators typically use multicalls to optimize profit:
+
+```solidity
+MultiCall[] memory calls = [
+    // 1. Update prices if needed
+    MultiCall({
+        target: facade,
+        callData: abi.encodeCall(facade.onDemandPriceUpdates, (priceUpdates))
+    }),
+    
+    // 2. Swap collateral to underlying
+    MultiCall({
+        target: adapter,
+        callData: abi.encodeCall(adapter.swap, (swapParams))
+    }),
+    
+    // 3. Add additional underlying if needed
+    MultiCall({
+        target: facade,
+        callData: abi.encodeCall(facade.addCollateral, (underlying, amount))
+    }),
+    
+    // 4. Withdraw remaining collateral
+    MultiCall({
+        target: facade,
+        callData: abi.encodeCall(
+            facade.withdrawCollateral,
+            (token, type(uint256).max, liquidator)
+        )
+    })
+];
+
+facade.liquidateCreditAccount(creditAccount, liquidator, calls);
+```
+
+**Liquidation Flow Considerations:**
+
+1. **Price Updates**: Use on-demand updates if prices are stale
+2. **Collateral Conversion**: Swap to underlying for efficient debt repayment
+3. **Additional Funding**: May need to add funds if collateral insufficient
+4. **Profit Extraction**: Withdraw excess collateral as profit
+5. **Gas Optimization**: Minimize number of operations
+
+<Tip>
+Experienced liquidators often use flash loans to fund liquidations without upfront capital, repaying the loan with seized collateral.
+</Tip>
+
+### Liquidator Bots
+
+Successful liquidation requires:
+
+1. **Monitoring**: Continuously check account health factors
+2. **Price Feeds**: Track both protocol and market prices
+3. **Gas Management**: Use appropriate gas prices for urgency
+4. **MEV Protection**: Consider private mempools or MEV-share
+5. **Capital Efficiency**: Use flash loans or own reserves
+
+**Bot Permission System:**
+
+Accounts can grant bots permission for automated protection:
+
+```solidity
+function setBotPermissions(address bot, uint192 permissions) external;
+
+function botMulticall(
+    address creditAccount,
+    MultiCall[] calldata calls
+) external;
+```
+
+Bots with permissions can:
+- Add collateral
+- Repay debt  
+- Swap positions
+- Adjust quotas
+- Execute protection strategies
+
+This enables:
+- Automated liquidation protection
+- Stop-loss mechanisms
+- Rebalancing strategies
+- Dynamic health management
+
+## Loss Handling
+
+### Treasury Share Buffer
+
+When liquidations result in losses, the protocol attempts to cover them:
+
+```solidity
+function repayCreditAccount(
+    uint256 repaidAmount,
+    uint256 profit,
+    uint256 loss
+) external {
+    if (loss > 0) {
+        uint256 treasuryShares = balanceOf(treasury);
+        uint256 expectedLiq = expectedLiquidity();
+        
+        // Calculate shares to burn
+        uint256 sharesToBurn = loss * totalSupply() / expectedLiq;
+        
+        if (sharesToBurn <= treasuryShares) {
+            // Treasury can cover loss
+            _burn(treasury, sharesToBurn);
+        } else {
+            // Treasury insufficient, incur bad debt
+            _burn(treasury, treasuryShares);
+            uint256 uncoveredLoss = loss - 
+                (treasuryShares * expectedLiq / totalSupply());
+            emit IncurUncoveredLoss(msg.sender, uncoveredLoss);
+        }
+    }
+}
+```
+
+**Loss Waterfall:**
+
+1. **Protocol fees absorbed**: Liquidation fee foregone
+2. **Treasury shares burned**: First-loss capital
+3. **LP dilution**: If treasury exhausted, all LPs share loss
+
+<Warning>
+Treasury shares provide a buffer, but severe market events can exhaust this buffer, causing losses for LPs. This is why conservative liquidation thresholds are critical.
+</Warning>
+
+### Loss Policy
+
+Credit facades can implement custom loss policies:
+
+```solidity
+interface ILossPolicy {
+    function processLoss(
+        address creditAccount,
+        uint256 loss,
+        bytes calldata data
+    ) external returns (bool lossCovered);
+}
+```
+
+Loss policies can:
+- Use insurance funds
+- Trigger emergency responses
+- Notify external systems
+- Implement custom recovery mechanisms
+
+## Liquidation Protection
+
+### Monitoring Health Factor
+
+Users should actively monitor their accounts:
+
+```solidity
+// Check current health
+function isLiquidatable(address creditAccount, uint16 minHealthFactor)
+    external view returns (bool);
+
+// Get detailed collateral data
+function calcDebtAndCollateral(
+    address creditAccount,
+    CollateralCalcTask task
+) external view returns (CollateralDebtData memory);
+```
+
+**Recommended Monitoring:**
+- Check health factor regularly (every block in volatile markets)
+- Set alerts for HF < 110% (10% buffer)
+- Monitor collateral token prices
+- Watch for LT ramping schedules
+
+### Protection Strategies
+
+<CardGroup cols={2}>
+  <Card title="Maintain Buffer" icon="shield">
+    - Keep health factor > 120%
+    - Leave room for price volatility
+    - Account for worst-case scenarios
+    - Consider correlation between assets
+  </Card>
+  
+  <Card title="Use Bot Protection" icon="robot">
+    - Grant bot permissions
+    - Set up automated monitoring
+    - Define trigger conditions
+    - Test protection mechanisms
+  </Card>
+  
+  <Card title="Diversify Collateral" icon="layer-group">
+    - Use multiple collateral types
+    - Avoid concentration in volatile assets
+    - Balance high and low LT tokens
+    - Consider correlation during stress
+  </Card>
+  
+  <Card title="Active Management" icon="gauge-high">
+    - Repay debt during downturns
+    - Add collateral proactively
+    - Reduce exposure in high volatility
+    - Close positions before expiration
+  </Card>
+</CardGroup>
+
+### Emergency Actions
+
+If health factor drops dangerously:
+
+```solidity
+// Option 1: Add collateral
+multicall(account, [
+    MultiCall(facade, abi.encodeCall(facade.addCollateral, (token, amount)))
+]);
+
+// Option 2: Repay debt
+multicall(account, [
+    MultiCall(facade, abi.encodeCall(facade.decreaseDebt, (amount)))
+]);
+
+// Option 3: Swap to safer collateral
+multicall(account, [
+    MultiCall(adapter, abi.encodeCall(adapter.swap, (volatileToken, stablecoin, amount)))
+]);
+
+// Option 4: Reduce leverage
+multicall(account, [
+    MultiCall(adapter, abi.encodeCall(adapter.swap, (collateral, underlying, amount))),
+    MultiCall(facade, abi.encodeCall(facade.decreaseDebt, (amount)))
+]);
+```
+
+## Expired Account Liquidation
+
+Some credit facades have expiration dates:
+
+```solidity
+bool public expirable;
+uint40 public expirationDate;
+```
+
+After expiration:
+- Accounts use `feeLiquidationExpired` and `liquidationDiscountExpired`
+- Typically less favorable to borrower (higher fees/premium)
+- Encourages users to close before expiration
+- Protects lenders from indefinite exposure
+
+**Expiration Flow:**
+
+```solidity
+if (expirable && block.timestamp > expirationDate) {
+    // Use expired liquidation parameters
+    feeLiquidation = feeLiquidationExpired;
+    liquidationDiscount = liquidationDiscountExpired;
+    isExpired = true;
+}
+```
+
+Users should:
+- Close positions before expiration
+- Monitor expiration dates
+- Understand expired liquidation terms
+- Migrate to new facades if needed
+
+## Best Practices
+
+### For Borrowers
+
+- Monitor health factor continuously
+- Maintain adequate buffer (≥20%)
+- Set up bot protection
+- Avoid over-leverage
+- Close positions during extreme volatility
+- Understand liquidation costs
+- Have emergency funds ready
+
+### For Liquidators
+
+- Monitor accounts systematically
+- Calculate profitability before acting
+- Use flash loans for capital efficiency
+- Optimize gas usage
+- Handle multiple collateral types
+- Account for slippage and fees
+- Protect against MEV attacks
+
+### For Protocol Designers
+
+- Set conservative liquidation thresholds
+- Maintain healthy treasury buffer
+- Monitor aggregate exposure
+- Test liquidation parameters
+- Consider tail risk scenarios
+- Implement circuit breakers
+- Audit liquidation logic thoroughly
+
+<Info>
+Liquidations are a critical safety mechanism. Properly incentivized liquidators ensure the protocol remains solvent even during market stress.
+</Info>

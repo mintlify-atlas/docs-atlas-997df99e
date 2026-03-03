@@ -1,0 +1,747 @@
+---
+title: Events
+description: Events emitted by Gearbox Protocol Core V3 contracts
+---
+
+Gearbox Protocol emits various events to track important state changes and operations.
+
+## Credit Manager Events
+
+### SetCreditConfigurator
+
+```solidity
+event SetCreditConfigurator(address indexed newConfigurator)
+```
+
+Emitted when a new credit configurator is set.
+
+<ParamField path="newConfigurator" type="address">
+  Address of the new credit configurator
+</ParamField>
+
+## Credit Facade Events
+
+### OpenCreditAccount
+
+```solidity
+event OpenCreditAccount(
+    address indexed creditAccount,
+    address indexed onBehalfOf,
+    address indexed caller,
+    uint256 referralCode
+)
+```
+
+Emitted when a new credit account is opened.
+
+<ParamField path="creditAccount" type="address">
+  Address of the newly created credit account
+</ParamField>
+
+<ParamField path="onBehalfOf" type="address">
+  Address the account was opened for
+</ParamField>
+
+<ParamField path="caller" type="address">
+  Address that initiated the account opening
+</ParamField>
+
+<ParamField path="referralCode" type="uint256">
+  Referral code used
+</ParamField>
+
+### CloseCreditAccount
+
+```solidity
+event CloseCreditAccount(
+    address indexed creditAccount,
+    address indexed borrower
+)
+```
+
+Emitted when an account is closed.
+
+<ParamField path="creditAccount" type="address">
+  Address of the closed credit account
+</ParamField>
+
+<ParamField path="borrower" type="address">
+  Address of the account owner
+</ParamField>
+
+### LiquidateCreditAccount
+
+```solidity
+event LiquidateCreditAccount(
+    address indexed creditAccount,
+    address indexed liquidator,
+    address to,
+    uint256 remainingFunds
+)
+```
+
+Emitted when an account is liquidated.
+
+<ParamField path="creditAccount" type="address">
+  Address of the liquidated credit account
+</ParamField>
+
+<ParamField path="liquidator" type="address">
+  Address of the liquidator
+</ParamField>
+
+<ParamField path="to" type="address">
+  Address receiving remaining funds
+</ParamField>
+
+<ParamField path="remainingFunds" type="uint256">
+  Amount of remaining funds after liquidation
+</ParamField>
+
+### PartiallyLiquidateCreditAccount
+
+```solidity
+event PartiallyLiquidateCreditAccount(
+    address indexed creditAccount,
+    address indexed token,
+    address indexed liquidator,
+    uint256 repaidDebt,
+    uint256 seizedCollateral,
+    uint256 fee
+)
+```
+
+Emitted when an account is partially liquidated.
+
+<ParamField path="creditAccount" type="address">
+  Address of the partially liquidated credit account
+</ParamField>
+
+<ParamField path="token" type="address">
+  Collateral token that was seized
+</ParamField>
+
+<ParamField path="liquidator" type="address">
+  Address of the liquidator
+</ParamField>
+
+<ParamField path="repaidDebt" type="uint256">
+  Amount of debt repaid
+</ParamField>
+
+<ParamField path="seizedCollateral" type="uint256">
+  Amount of collateral seized
+</ParamField>
+
+<ParamField path="fee" type="uint256">
+  Fee paid to liquidator
+</ParamField>
+
+### AddCollateral
+
+```solidity
+event AddCollateral(
+    address indexed creditAccount,
+    address indexed token,
+    uint256 amount
+)
+```
+
+Emitted when collateral is added to an account.
+
+<ParamField path="creditAccount" type="address">
+  Address of the credit account
+</ParamField>
+
+<ParamField path="token" type="address">
+  Token address
+</ParamField>
+
+<ParamField path="amount" type="uint256">
+  Amount added
+</ParamField>
+
+### WithdrawCollateral
+
+```solidity
+event WithdrawCollateral(
+    address indexed creditAccount,
+    address indexed token,
+    uint256 amount,
+    address to
+)
+```
+
+Emitted when collateral is withdrawn from an account.
+
+<ParamField path="creditAccount" type="address">
+  Address of the credit account
+</ParamField>
+
+<ParamField path="token" type="address">
+  Token address
+</ParamField>
+
+<ParamField path="amount" type="uint256">
+  Amount withdrawn
+</ParamField>
+
+<ParamField path="to" type="address">
+  Recipient address
+</ParamField>
+
+### StartMultiCall
+
+```solidity
+event StartMultiCall(
+    address indexed creditAccount,
+    address indexed caller
+)
+```
+
+Emitted when a multicall is started.
+
+<ParamField path="creditAccount" type="address">
+  Address of the credit account
+</ParamField>
+
+<ParamField path="caller" type="address">
+  Address initiating the multicall
+</ParamField>
+
+### WithdrawPhantomToken
+
+```solidity
+event WithdrawPhantomToken(
+    address indexed creditAccount,
+    address indexed token,
+    uint256 amount
+)
+```
+
+Emitted when a phantom token is withdrawn by account.
+
+<ParamField path="creditAccount" type="address">
+  Address of the credit account
+</ParamField>
+
+<ParamField path="token" type="address">
+  Phantom token address
+</ParamField>
+
+<ParamField path="amount" type="uint256">
+  Amount withdrawn
+</ParamField>
+
+### Execute
+
+```solidity
+event Execute(
+    address indexed creditAccount,
+    address indexed targetContract
+)
+```
+
+Emitted when a call from account to an external contract is made during a multicall.
+
+<ParamField path="creditAccount" type="address">
+  Address of the credit account
+</ParamField>
+
+<ParamField path="targetContract" type="address">
+  Target contract address
+</ParamField>
+
+### FinishMultiCall
+
+```solidity
+event FinishMultiCall()
+```
+
+Emitted when a multicall is finished.
+
+## Pool Events
+
+### Refer
+
+```solidity
+event Refer(
+    address indexed onBehalfOf,
+    uint256 indexed referralCode,
+    uint256 amount
+)
+```
+
+Emitted when depositing liquidity with a referral code.
+
+<ParamField path="onBehalfOf" type="address">
+  Address receiving the shares
+</ParamField>
+
+<ParamField path="referralCode" type="uint256">
+  Referral code used
+</ParamField>
+
+<ParamField path="amount" type="uint256">
+  Amount deposited
+</ParamField>
+
+### Borrow
+
+```solidity
+event Borrow(
+    address indexed creditManager,
+    address indexed creditAccount,
+    uint256 amount
+)
+```
+
+Emitted when a credit account borrows funds from the pool.
+
+<ParamField path="creditManager" type="address">
+  Credit manager address
+</ParamField>
+
+<ParamField path="creditAccount" type="address">
+  Credit account address
+</ParamField>
+
+<ParamField path="amount" type="uint256">
+  Amount borrowed
+</ParamField>
+
+### Repay
+
+```solidity
+event Repay(
+    address indexed creditManager,
+    uint256 borrowedAmount,
+    uint256 profit,
+    uint256 loss
+)
+```
+
+Emitted when a credit account's debt is repaid to the pool.
+
+<ParamField path="creditManager" type="address">
+  Credit manager address
+</ParamField>
+
+<ParamField path="borrowedAmount" type="uint256">
+  Amount of principal repaid
+</ParamField>
+
+<ParamField path="profit" type="uint256">
+  Profit from the account
+</ParamField>
+
+<ParamField path="loss" type="uint256">
+  Loss from the account
+</ParamField>
+
+### IncurUncoveredLoss
+
+```solidity
+event IncurUncoveredLoss(
+    address indexed creditManager,
+    uint256 loss
+)
+```
+
+Emitted when incurred loss cannot be fully covered by burning treasury's shares.
+
+<ParamField path="creditManager" type="address">
+  Credit manager address
+</ParamField>
+
+<ParamField path="loss" type="uint256">
+  Uncovered loss amount
+</ParamField>
+
+### SetInterestRateModel
+
+```solidity
+event SetInterestRateModel(address indexed newInterestRateModel)
+```
+
+Emitted when a new interest rate model contract is set.
+
+<ParamField path="newInterestRateModel" type="address">
+  New interest rate model address
+</ParamField>
+
+### SetPoolQuotaKeeper
+
+```solidity
+event SetPoolQuotaKeeper(address indexed newPoolQuotaKeeper)
+```
+
+Emitted when a new pool quota keeper contract is set.
+
+<ParamField path="newPoolQuotaKeeper" type="address">
+  New pool quota keeper address
+</ParamField>
+
+### SetTotalDebtLimit
+
+```solidity
+event SetTotalDebtLimit(uint256 limit)
+```
+
+Emitted when a new total debt limit is set.
+
+<ParamField path="limit" type="uint256">
+  New total debt limit
+</ParamField>
+
+### AddCreditManager
+
+```solidity
+event AddCreditManager(address indexed creditManager)
+```
+
+Emitted when a new credit manager is connected to the pool.
+
+<ParamField path="creditManager" type="address">
+  Credit manager address
+</ParamField>
+
+### SetCreditManagerDebtLimit
+
+```solidity
+event SetCreditManagerDebtLimit(
+    address indexed creditManager,
+    uint256 newLimit
+)
+```
+
+Emitted when a new debt limit is set for a credit manager.
+
+<ParamField path="creditManager" type="address">
+  Credit manager address
+</ParamField>
+
+<ParamField path="newLimit" type="uint256">
+  New debt limit
+</ParamField>
+
+### SetWithdrawFee
+
+```solidity
+event SetWithdrawFee(uint256 fee)
+```
+
+Emitted when a new withdrawal fee is set.
+
+<ParamField path="fee" type="uint256">
+  New withdrawal fee in basis points
+</ParamField>
+
+## Price Oracle Events
+
+### SetPriceFeed
+
+```solidity
+event SetPriceFeed(
+    address indexed token,
+    address indexed priceFeed,
+    uint32 stalenessPeriod,
+    bool skipCheck
+)
+```
+
+Emitted when a new price feed is set for a token.
+
+<ParamField path="token" type="address">
+  Token address
+</ParamField>
+
+<ParamField path="priceFeed" type="address">
+  Price feed address
+</ParamField>
+
+<ParamField path="stalenessPeriod" type="uint32">
+  Staleness period in seconds
+</ParamField>
+
+<ParamField path="skipCheck" type="bool">
+  Whether to skip staleness checks
+</ParamField>
+
+### SetReservePriceFeed
+
+```solidity
+event SetReservePriceFeed(
+    address indexed token,
+    address indexed priceFeed,
+    uint32 stalenessPeriod,
+    bool skipCheck
+)
+```
+
+Emitted when a new reserve price feed is set for a token.
+
+<ParamField path="token" type="address">
+  Token address
+</ParamField>
+
+<ParamField path="priceFeed" type="address">
+  Reserve price feed address
+</ParamField>
+
+<ParamField path="stalenessPeriod" type="uint32">
+  Staleness period in seconds
+</ParamField>
+
+<ParamField path="skipCheck" type="bool">
+  Whether to skip staleness checks
+</ParamField>
+
+## Credit Configurator Events
+
+### AddCollateralToken
+
+```solidity
+event AddCollateralToken(address indexed token)
+```
+
+Emitted when a token is made recognizable as collateral.
+
+<ParamField path="token" type="address">
+  Token address
+</ParamField>
+
+### SetTokenLiquidationThreshold
+
+```solidity
+event SetTokenLiquidationThreshold(
+    address indexed token,
+    uint16 liquidationThreshold
+)
+```
+
+Emitted when a new collateral token liquidation threshold is set.
+
+<ParamField path="token" type="address">
+  Token address
+</ParamField>
+
+<ParamField path="liquidationThreshold" type="uint16">
+  New liquidation threshold in basis points
+</ParamField>
+
+### ScheduleTokenLiquidationThresholdRamp
+
+```solidity
+event ScheduleTokenLiquidationThresholdRamp(
+    address indexed token,
+    uint16 liquidationThresholdInitial,
+    uint16 liquidationThresholdFinal,
+    uint40 timestampRampStart,
+    uint40 timestampRampEnd
+)
+```
+
+Emitted when a collateral token liquidation threshold ramping is scheduled.
+
+<ParamField path="token" type="address">
+  Token address
+</ParamField>
+
+<ParamField path="liquidationThresholdInitial" type="uint16">
+  Initial liquidation threshold
+</ParamField>
+
+<ParamField path="liquidationThresholdFinal" type="uint16">
+  Final liquidation threshold
+</ParamField>
+
+<ParamField path="timestampRampStart" type="uint40">
+  Ramp start timestamp
+</ParamField>
+
+<ParamField path="timestampRampEnd" type="uint40">
+  Ramp end timestamp
+</ParamField>
+
+### ForbidToken
+
+```solidity
+event ForbidToken(address indexed token)
+```
+
+Emitted when a collateral token is forbidden.
+
+<ParamField path="token" type="address">
+  Token address
+</ParamField>
+
+### AllowToken
+
+```solidity
+event AllowToken(address indexed token)
+```
+
+Emitted when a previously forbidden collateral token is allowed.
+
+<ParamField path="token" type="address">
+  Token address
+</ParamField>
+
+### AllowAdapter
+
+```solidity
+event AllowAdapter(
+    address indexed targetContract,
+    address indexed adapter
+)
+```
+
+Emitted when a new adapter and its target contract are allowed.
+
+<ParamField path="targetContract" type="address">
+  Target contract address
+</ParamField>
+
+<ParamField path="adapter" type="address">
+  Adapter address
+</ParamField>
+
+### ForbidAdapter
+
+```solidity
+event ForbidAdapter(
+    address indexed targetContract,
+    address indexed adapter
+)
+```
+
+Emitted when an adapter and its target contract are forbidden.
+
+<ParamField path="targetContract" type="address">
+  Target contract address
+</ParamField>
+
+<ParamField path="adapter" type="address">
+  Adapter address
+</ParamField>
+
+### UpdateFees
+
+```solidity
+event UpdateFees(
+    uint16 feeLiquidation,
+    uint16 liquidationPremium,
+    uint16 feeLiquidationExpired,
+    uint16 liquidationPremiumExpired
+)
+```
+
+Emitted when new fee parameters are set.
+
+<ParamField path="feeLiquidation" type="uint16">
+  Liquidation fee in basis points
+</ParamField>
+
+<ParamField path="liquidationPremium" type="uint16">
+  Liquidation premium in basis points
+</ParamField>
+
+<ParamField path="feeLiquidationExpired" type="uint16">
+  Expired liquidation fee in basis points
+</ParamField>
+
+<ParamField path="liquidationPremiumExpired" type="uint16">
+  Expired liquidation premium in basis points
+</ParamField>
+
+### SetPriceOracle
+
+```solidity
+event SetPriceOracle(address indexed priceOracle)
+```
+
+Emitted when a new price oracle is set.
+
+<ParamField path="priceOracle" type="address">
+  New price oracle address
+</ParamField>
+
+### SetCreditFacade
+
+```solidity
+event SetCreditFacade(address indexed creditFacade)
+```
+
+Emitted when a new facade is connected.
+
+<ParamField path="creditFacade" type="address">
+  New credit facade address
+</ParamField>
+
+### CreditConfiguratorUpgraded
+
+```solidity
+event CreditConfiguratorUpgraded(address indexed creditConfigurator)
+```
+
+Emitted when the configurator contract is upgraded.
+
+<ParamField path="creditConfigurator" type="address">
+  New credit configurator address
+</ParamField>
+
+### SetBorrowingLimits
+
+```solidity
+event SetBorrowingLimits(
+    uint256 minDebt,
+    uint256 maxDebt
+)
+```
+
+Emitted when new debt principal limits are set.
+
+<ParamField path="minDebt" type="uint256">
+  Minimum debt
+</ParamField>
+
+<ParamField path="maxDebt" type="uint256">
+  Maximum debt
+</ParamField>
+
+### SetMaxDebtPerBlockMultiplier
+
+```solidity
+event SetMaxDebtPerBlockMultiplier(uint8 maxDebtPerBlockMultiplier)
+```
+
+Emitted when a new max debt per block multiplier is set.
+
+<ParamField path="maxDebtPerBlockMultiplier" type="uint8">
+  New multiplier value
+</ParamField>
+
+### SetLossPolicy
+
+```solidity
+event SetLossPolicy(address indexed lossPolicy)
+```
+
+Emitted when a new loss policy is set.
+
+<ParamField path="lossPolicy" type="address">
+  New loss policy address
+</ParamField>
+
+### SetExpirationDate
+
+```solidity
+event SetExpirationDate(uint40 expirationDate)
+```
+
+Emitted when a new expiration timestamp is set.
+
+<ParamField path="expirationDate" type="uint40">
+  New expiration timestamp
+</ParamField>

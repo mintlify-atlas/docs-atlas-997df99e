@@ -1,122 +1,133 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "Gearbox Protocol Core V3",
+  "theme": "aspen",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#0066FF",
+    "light": "#3385FF",
+    "dark": "#0052CC"
   },
-  "favicon": "/favicon.svg",
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/Gearbox-protocol/core-v3"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/Gearbox-protocol/core-v3"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Get Started",
             "pages": [
-              "index",
+              "introduction",
               "quickstart",
-              "development"
+              "installation"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Core Concepts",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "concepts/architecture",
+              "concepts/credit-accounts",
+              "concepts/pools",
+              "concepts/collateral-debt",
+              "concepts/quotas",
+              "concepts/liquidations"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "Guides",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
-            ]
-          },
-          {
-            "group": "AI tools",
-            "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "guides/integration",
+              "guides/opening-credit-account",
+              "guides/managing-debt",
+              "guides/working-with-adapters",
+              "guides/price-oracles"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "Smart Contracts",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Credit System",
             "pages": [
-              "api-reference/introduction"
+              "contracts/credit/credit-manager",
+              "contracts/credit/credit-facade",
+              "contracts/credit/credit-account",
+              "contracts/credit/credit-configurator"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "Pool System",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "contracts/pool/pool",
+              "contracts/pool/pool-quota-keeper",
+              "contracts/pool/interest-rate-model",
+              "contracts/pool/gauge"
+            ]
+          },
+          {
+            "group": "Core Infrastructure",
+            "pages": [
+              "contracts/core/price-oracle",
+              "contracts/core/account-factory",
+              "contracts/core/bot-list",
+              "contracts/core/gear-staking",
+              "contracts/core/loss-policy"
+            ]
+          },
+          {
+            "group": "Libraries",
+            "pages": [
+              "contracts/libraries/credit-logic",
+              "contracts/libraries/collateral-logic",
+              "contracts/libraries/quotas-logic",
+              "contracts/libraries/bitmask",
+              "contracts/libraries/constants"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Core Interfaces",
+            "pages": [
+              "api/credit-manager",
+              "api/credit-facade",
+              "api/credit-account",
+              "api/pool",
+              "api/price-oracle"
+            ]
+          },
+          {
+            "group": "Data Structures",
+            "pages": [
+              "api/structs/collateral-debt-data",
+              "api/structs/credit-account-info",
+              "api/structs/multicall",
+              "api/enums"
+            ]
+          },
+          {
+            "group": "Events & Errors",
+            "pages": [
+              "api/events",
+              "api/exceptions"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

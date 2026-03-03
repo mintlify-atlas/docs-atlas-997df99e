@@ -1,0 +1,569 @@
+---
+title: CreditConfiguratorV3
+description: Configuration interface for Credit Manager and Credit Facade settings in Gearbox Protocol V3
+---
+
+## Overview
+
+The Credit Configurator V3 provides functionality to configure various aspects of the Credit Manager and Credit Facade's behavior. It serves as the administrative interface for managing tokens, adapters, fees, and other protocol parameters.
+
+**Contract Location**: `contracts/credit/CreditConfiguratorV3.sol`
+
+**Interface**: `ICreditConfiguratorV3.sol`
+
+## Key Features
+
+- Collateral token management and liquidation thresholds
+- Adapter allowlisting for protocol integrations
+- Fee configuration for liquidations
+- Debt limit management
+- Contract upgrades (price oracle, facade, configurator)
+- Token permission management (forbidden/allowed)
+- Loss policy configuration
+
+## State Variables
+
+### Immutable Variables
+
+<ParamField path="version" type="uint256">
+  Contract version (always returns `3_10`)
+</ParamField>
+
+<ParamField path="contractType" type="bytes32">
+  Contract type identifier (always returns `"CREDIT_CONFIGURATOR"`)
+</ParamField>
+
+<ParamField path="creditManager" type="address">
+  Credit manager address this configurator manages
+</ParamField>
+
+<ParamField path="underlying" type="address">
+  Underlying token address of the credit manager
+</ParamField>
+
+## Token Management
+
+### addCollateralToken
+
+```solidity
+function addCollateralToken(
+    address token,
+    uint16 liquidationThreshold
+) external
+```
+
+Makes a token recognizable as collateral in the credit manager.
+
+<ParamField path="token" type="address" required>
+  Token to add as collateral
+</ParamField>
+
+<ParamField path="liquidationThreshold" type="uint16" required>
+  Liquidation threshold in basis points (e.g., 8500 = 85%)
+</ParamField>
+
+<Note>
+**Prerequisites:**
+- Token must be a valid ERC-20 contract
+- Token must have a price feed in the price oracle
+- Token must be quoted in the pool's quota keeper
+- Liquidation threshold must be ≤ underlying token's LT
+- If phantom token, its `depositedToken` must already be added
+</Note>
+
+<Warning>
+Cannot add the underlying token as collateral (it's automatically added during credit manager deployment).
+</Warning>
+
+### setLiquidationThreshold
+
+```solidity
+function setLiquidationThreshold(
+    address token,
+    uint16 liquidationThreshold
+) external
+```
+
+Sets a token's liquidation threshold immediately.
+
+<ParamField path="token" type="address" required>
+  Token to set LT for
+</ParamField>
+
+<ParamField path="liquidationThreshold" type="uint16" required>
+  New liquidation threshold in basis points
+</ParamField>
+
+### rampLiquidationThreshold
+
+```solidity
+function rampLiquidationThreshold(
+    address token,
+    uint16 liquidationThresholdFinal,
+    uint40 rampStart,
+    uint24 rampDuration
+) external
+```
+
+Schedules gradual liquidation threshold ramping for a token.
+
+<ParamField path="token" type="address" required>
+  Token to ramp LT for
+</ParamField>
+
+<ParamField path="liquidationThresholdFinal" type="uint16" required>
+  Final LT after ramping completes (in bps)
+</ParamField>
+
+<ParamField path="rampStart" type="uint40" required>
+  Timestamp to start ramping (starts immediately if in the past)
+</ParamField>
+
+<ParamField path="rampDuration" type="uint24" required>
+  Ramping duration in seconds (minimum 2 days)
+</ParamField>
+
+<Note>
+Ramping allows for gradual reduction of liquidation thresholds without immediately putting existing positions at risk.
+</Note>
+
+### forbidToken
+
+```solidity
+function forbidToken(address token) external
+```
+
+Marks a token as forbidden in the credit facade.
+
+<ParamField path="token" type="address" required>
+  Token to forbid
+</ParamField>
+
+<Note>
+- Forbidden tokens still count towards account value
+- Having forbidden tokens enabled triggers safer collateral checks
+- Users are incentivized to reduce exposure to forbidden tokens
+- Only callable by pausable admins
+</Note>
+
+### allowToken
+
+```solidity
+function allowToken(address token) external
+```
+
+Removes forbidden status from a previously forbidden token.
+
+<ParamField path="token" type="address" required>
+  Token to allow
+</ParamField>
+
+## Adapter Management
+
+### allowAdapter
+
+```solidity
+function allowAdapter(address adapter) external
+```
+
+Allows a new adapter for protocol integrations.
+
+<ParamField path="adapter" type="address" required>
+  Adapter contract address
+</ParamField>
+
+<Note>
+- If the adapter's target contract already has an adapter, the old one is removed
+- Adapter must be compatible with the credit manager
+- Target contract must be a valid contract address
+- Neither adapter nor target can be the credit manager or credit facade
+</Note>
+
+### forbidAdapter
+
+```solidity
+function forbidAdapter(address adapter) external
+```
+
+Forbids both an adapter and its target contract.
+
+<ParamField path="adapter" type="address" required>
+  Adapter to forbid
+</ParamField>
+
+<Warning>
+The adapter must be currently registered in the credit manager.
+</Warning>
+
+### allowedAdapters
+
+```solidity
+function allowedAdapters() external view returns (address[] memory)
+```
+
+Returns all currently allowed adapters.
+
+## Fee Configuration
+
+### setFees
+
+```solidity
+function setFees(
+    uint16 feeLiquidation,
+    uint16 liquidationPremium,
+    uint16 feeLiquidationExpired,
+    uint16 liquidationPremiumExpired
+) external
+```
+
+Sets new fee parameters in the credit manager (all values in basis points).
+
+<ParamField path="feeLiquidation" type="uint16" required>
+  Protocol profit from liquidated account value
+</ParamField>
+
+<ParamField path="liquidationPremium" type="uint16" required>
+  Liquidator's reward from liquidated account value
+</ParamField>
+
+<ParamField path="feeLiquidationExpired" type="uint16" required>
+  Protocol profit from expired account liquidation
+</ParamField>
+
+<ParamField path="liquidationPremiumExpired" type="uint16" required>
+  Liquidator's reward from expired account liquidation
+</ParamField>
+
+<Note>
+**Validation rules:**
+- Liquidation fee must not exceed premium (same for expired)
+- Expired fee/premium must not exceed non-expired values
+- Sum of premium + fee must remain constant from previous values
+- For expired liquidations, sum can only change if >2 weeks before expiration
+</Note>
+
+```solidity
+// Example: Setting 2% fee and 5% premium
+configurator.setFees(
+    200,   // 2% protocol fee
+    500,   // 5% liquidator premium  
+    150,   // 1.5% expired protocol fee
+    350    // 3.5% expired liquidator premium
+);
+```
+
+## Debt Limits
+
+### setDebtLimits
+
+```solidity
+function setDebtLimits(
+    uint128 newMinDebt,
+    uint128 newMaxDebt
+) external
+```
+
+Sets minimum and maximum debt limits per credit account.
+
+<ParamField path="newMinDebt" type="uint128" required>
+  Minimum debt amount per account
+</ParamField>
+
+<ParamField path="newMaxDebt" type="uint128" required>
+  Maximum debt amount per account
+</ParamField>
+
+<Note>
+**Validation:**
+- `minDebt` must be ≤ `maxDebt`
+- `maxDebt / minDebt` must be ≤ `100 / maxEnabledTokens`
+- USD value of `minDebt` must be > 0 according to price oracle
+</Note>
+
+### setMaxDebtPerBlockMultiplier
+
+```solidity
+function setMaxDebtPerBlockMultiplier(
+    uint8 newMaxDebtLimitPerBlockMultiplier
+) external
+```
+
+Sets the maximum debt that can be borrowed in a single block.
+
+<ParamField path="newMaxDebtLimitPerBlockMultiplier" type="uint8" required>
+  Multiplier of `maxDebt` (use `type(uint8).max` to disable)
+</ParamField>
+
+### forbidBorrowing
+
+```solidity
+function forbidBorrowing() external
+```
+
+Disables borrowing by setting max debt per block multiplier to zero.
+
+<Note>
+Only callable by pausable admins. Useful for emergency situations.
+</Note>
+
+## Contract Upgrades
+
+### setPriceOracle
+
+```solidity
+function setPriceOracle(address newPriceOracle) external
+```
+
+Sets a new price oracle in the credit manager.
+
+<ParamField path="newPriceOracle" type="address" required>
+  New price oracle contract address
+</ParamField>
+
+<Warning>
+- Must have a non-zero USD price for current `minDebt`
+- Must have price feeds for all collateral tokens
+</Warning>
+
+### setCreditFacade
+
+```solidity
+function setCreditFacade(
+    address newCreditFacade,
+    bool migrateParams
+) external
+```
+
+Upgrades the credit facade connected to the credit manager.
+
+<ParamField path="newCreditFacade" type="address" required>
+  New credit facade contract address
+</ParamField>
+
+<ParamField path="migrateParams" type="bool" required>
+  Whether to copy parameters from the old facade
+</ParamField>
+
+<Note>
+**Migrated parameters (when `migrateParams = true`):**
+- Max debt per block multiplier
+- Debt limits (min/max)
+- Forbidden tokens mask
+- Expiration date (if both facades are expirable)
+</Note>
+
+<Warning>
+New facade cannot be an allowed adapter or its target contract.
+</Warning>
+
+### upgradeCreditConfigurator
+
+```solidity
+function upgradeCreditConfigurator(
+    address newCreditConfigurator
+) external
+```
+
+Upgrades the credit manager's configurator contract.
+
+<ParamField path="newCreditConfigurator" type="address" required>
+  New credit configurator address
+</ParamField>
+
+<Warning>
+The new configurator must have the exact same set of allowed adapters.
+</Warning>
+
+## Loss Policy
+
+### setLossPolicy
+
+```solidity
+function setLossPolicy(address newLossPolicy) external
+```
+
+Sets a new loss policy for controlling lossy liquidations.
+
+<ParamField path="newLossPolicy" type="address" required>
+  New loss policy contract address (must be a contract)
+</ParamField>
+
+<Note>
+Loss policies determine which liquidations with bad debt are allowed to proceed.
+</Note>
+
+## Expiration
+
+### setExpirationDate
+
+```solidity
+function setExpirationDate(uint40 newExpirationDate) external
+```
+
+Sets a new expiration date for the credit facade.
+
+<ParamField path="newExpirationDate" type="uint40" required>
+  New expiration timestamp
+</ParamField>
+
+<Note>
+- Automatically adjusted to be at least 2 weeks from now if closer
+- Must be after current expiration date (if set)
+- Only works if credit facade is expirable
+</Note>
+
+## View Functions
+
+### creditFacade
+
+```solidity
+function creditFacade() external view returns (address)
+```
+
+Returns the currently connected credit facade address.
+
+### allowedAdapters
+
+```solidity
+function allowedAdapters() external view returns (address[] memory)
+```
+
+Returns array of all allowed adapter addresses.
+
+## Events
+
+### Token Events
+
+```solidity
+event AddCollateralToken(address indexed token)
+event SetTokenLiquidationThreshold(address indexed token, uint16 liquidationThreshold)
+event ScheduleTokenLiquidationThresholdRamp(
+    address indexed token,
+    uint16 liquidationThresholdInitial,
+    uint16 liquidationThresholdFinal,
+    uint40 timestampRampStart,
+    uint40 timestampRampEnd
+)
+event ForbidToken(address indexed token)
+event AllowToken(address indexed token)
+```
+
+### Adapter Events
+
+```solidity
+event AllowAdapter(address indexed targetContract, address indexed adapter)
+event ForbidAdapter(address indexed targetContract, address indexed adapter)
+```
+
+### Configuration Events
+
+```solidity
+event UpdateFees(
+    uint16 feeLiquidation,
+    uint16 liquidationPremium,
+    uint16 feeLiquidationExpired,
+    uint16 liquidationPremiumExpired
+)
+event SetBorrowingLimits(uint256 minDebt, uint256 maxDebt)
+event SetMaxDebtPerBlockMultiplier(uint8 maxDebtPerBlockMultiplier)
+event SetLossPolicy(address indexed lossPolicy)
+event SetExpirationDate(uint40 expirationDate)
+```
+
+### Upgrade Events
+
+```solidity
+event SetPriceOracle(address indexed priceOracle)
+event SetCreditFacade(address indexed creditFacade)
+event CreditConfiguratorUpgraded(address indexed creditConfigurator)
+```
+
+## Access Control
+
+<Warning>
+Most functions require the configurator role. Some functions (like `forbidToken` and `forbidBorrowing`) only require pausable admin role.
+</Warning>
+
+- **Configurator Only**: Token management, adapter management, fee configuration, upgrades
+- **Pausable Admins Only**: `forbidToken()`, `forbidBorrowing()`
+
+## Example Usage
+
+### Adding a New Collateral Token
+
+```solidity
+// Add WETH with 90% LT
+configurator.addCollateralToken(
+    0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2, // WETH
+    9000 // 90% LT
+);
+```
+
+### Ramping Down Liquidation Threshold
+
+```solidity
+// Ramp USDT LT from 90% to 85% over 30 days
+configurator.rampLiquidationThreshold(
+    USDT,
+    8500,                    // Final LT: 85%
+    uint40(block.timestamp), // Start now
+    30 days                  // Duration
+);
+```
+
+### Allowing a Uniswap Adapter
+
+```solidity
+configurator.allowAdapter(uniswapV3Adapter);
+```
+
+### Updating Debt Limits
+
+```solidity
+// Set min debt to 10,000 USDC and max to 1,000,000 USDC
+configurator.setDebtLimits(
+    10_000e6,   // 10k USDC min
+    1_000_000e6 // 1M USDC max  
+);
+```
+
+### Emergency: Forbidding a Token
+
+```solidity
+// As pausable admin, forbid a risky token
+configurator.forbidToken(riskyToken);
+```
+
+## Common Patterns
+
+### Setting Up a New Credit Manager
+
+```solidity
+// 1. Add collateral tokens
+configurator.addCollateralToken(WETH, 9000);
+configurator.addCollateralToken(USDC, 9500);
+configurator.addCollateralToken(WBTC, 9000);
+
+// 2. Allow adapters
+configurator.allowAdapter(uniswapV3Adapter);
+configurator.allowAdapter(curveAdapter);
+
+// 3. Set debt limits
+configurator.setDebtLimits(10_000e6, 1_000_000e6);
+
+// 4. Configure fees
+configurator.setFees(200, 500, 150, 350);
+```
+
+### Migrating to New Facade
+
+```solidity
+// Deploy new facade
+CreditFacadeV3 newFacade = new CreditFacadeV3(...);
+
+// Upgrade with parameter migration
+configurator.setCreditFacade(
+    address(newFacade),
+    true // migrate parameters
+);
+```

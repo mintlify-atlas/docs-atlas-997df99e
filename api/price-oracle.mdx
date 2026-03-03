@@ -1,0 +1,281 @@
+---
+title: Price Oracle V3
+description: Price oracle contract managing price feeds for tokens
+---
+
+The Price Oracle manages price feeds for all tokens in the system and provides price conversion functions.
+
+## View Functions
+
+### getTokens
+
+```solidity
+function getTokens() external view returns (address[] memory)
+```
+
+Returns all tokens with configured price feeds.
+
+<ResponseField name="tokens" type="address[]">
+  Array of token addresses
+</ResponseField>
+
+### priceFeeds
+
+```solidity
+function priceFeeds(address token) external view returns (address priceFeed)
+```
+
+Returns the price feed for a token.
+
+<ParamField path="token" type="address" required>
+  The token address
+</ParamField>
+
+<ResponseField name="priceFeed" type="address">
+  The price feed contract address
+</ResponseField>
+
+### reservePriceFeeds
+
+```solidity
+function reservePriceFeeds(address token) external view returns (address)
+```
+
+Returns the reserve price feed for a token.
+
+<ParamField path="token" type="address" required>
+  The token address
+</ParamField>
+
+<ResponseField name="reservePriceFeed" type="address">
+  The reserve price feed contract address
+</ResponseField>
+
+### priceFeedParams
+
+```solidity
+function priceFeedParams(address token) external view returns (PriceFeedParams memory)
+```
+
+Returns the price feed parameters for a token.
+
+<ParamField path="token" type="address" required>
+  The token address
+</ParamField>
+
+<ResponseField name="params" type="PriceFeedParams">
+  Price feed parameters including staleness period and skip check flag
+</ResponseField>
+
+### reservePriceFeedParams
+
+```solidity
+function reservePriceFeedParams(address token) external view returns (PriceFeedParams memory)
+```
+
+Returns the reserve price feed parameters for a token.
+
+<ParamField path="token" type="address" required>
+  The token address
+</ParamField>
+
+<ResponseField name="params" type="PriceFeedParams">
+  Reserve price feed parameters
+</ResponseField>
+
+## Conversion
+
+### getPrice
+
+```solidity
+function getPrice(address token) external view returns (uint256)
+```
+
+Returns the price of a token in USD.
+
+<ParamField path="token" type="address" required>
+  The token address
+</ParamField>
+
+<ResponseField name="price" type="uint256">
+  Token price in USD (8 decimals)
+</ResponseField>
+
+### getSafePrice
+
+```solidity
+function getSafePrice(address token) external view returns (uint256)
+```
+
+Returns the safe price (minimum of main and reserve feeds) of a token in USD.
+
+<ParamField path="token" type="address" required>
+  The token address
+</ParamField>
+
+<ResponseField name="price" type="uint256">
+  Safe token price in USD (8 decimals)
+</ResponseField>
+
+### getReservePrice
+
+```solidity
+function getReservePrice(address token) external view returns (uint256)
+```
+
+Returns the reserve price of a token in USD.
+
+<ParamField path="token" type="address" required>
+  The token address
+</ParamField>
+
+<ResponseField name="price" type="uint256">
+  Reserve token price in USD (8 decimals)
+</ResponseField>
+
+### convertToUSD
+
+```solidity
+function convertToUSD(
+    uint256 amount,
+    address token
+) external view returns (uint256)
+```
+
+Converts a token amount to USD value.
+
+<ParamField path="amount" type="uint256" required>
+  Amount of tokens
+</ParamField>
+
+<ParamField path="token" type="address" required>
+  The token address
+</ParamField>
+
+<ResponseField name="usdValue" type="uint256">
+  USD value (8 decimals)
+</ResponseField>
+
+### convertFromUSD
+
+```solidity
+function convertFromUSD(
+    uint256 amount,
+    address token
+) external view returns (uint256)
+```
+
+Converts a USD amount to token amount.
+
+<ParamField path="amount" type="uint256" required>
+  USD amount (8 decimals)
+</ParamField>
+
+<ParamField path="token" type="address" required>
+  The token address
+</ParamField>
+
+<ResponseField name="tokenAmount" type="uint256">
+  Amount of tokens
+</ResponseField>
+
+### convert
+
+```solidity
+function convert(
+    uint256 amount,
+    address tokenFrom,
+    address tokenTo
+) external view returns (uint256)
+```
+
+Converts an amount from one token to another.
+
+<ParamField path="amount" type="uint256" required>
+  Amount of source tokens
+</ParamField>
+
+<ParamField path="tokenFrom" type="address" required>
+  Source token address
+</ParamField>
+
+<ParamField path="tokenTo" type="address" required>
+  Destination token address
+</ParamField>
+
+<ResponseField name="convertedAmount" type="uint256">
+  Amount in destination token
+</ResponseField>
+
+### safeConvertToUSD
+
+```solidity
+function safeConvertToUSD(
+    uint256 amount,
+    address token
+) external view returns (uint256)
+```
+
+Converts a token amount to USD value using safe price.
+
+<ParamField path="amount" type="uint256" required>
+  Amount of tokens
+</ParamField>
+
+<ParamField path="token" type="address" required>
+  The token address
+</ParamField>
+
+<ResponseField name="usdValue" type="uint256">
+  USD value using safe price (8 decimals)
+</ResponseField>
+
+## Configuration
+
+### setPriceFeed
+
+```solidity
+function setPriceFeed(
+    address token,
+    address priceFeed,
+    uint32 stalenessPeriod
+) external
+```
+
+Sets the price feed for a token.
+
+<ParamField path="token" type="address" required>
+  The token address
+</ParamField>
+
+<ParamField path="priceFeed" type="address" required>
+  The price feed contract address
+</ParamField>
+
+<ParamField path="stalenessPeriod" type="uint32" required>
+  Staleness period in seconds
+</ParamField>
+
+### setReservePriceFeed
+
+```solidity
+function setReservePriceFeed(
+    address token,
+    address priceFeed,
+    uint32 stalenessPeriod
+) external
+```
+
+Sets the reserve price feed for a token.
+
+<ParamField path="token" type="address" required>
+  The token address
+</ParamField>
+
+<ParamField path="priceFeed" type="address" required>
+  The reserve price feed contract address
+</ParamField>
+
+<ParamField path="stalenessPeriod" type="uint32" required>
+  Staleness period in seconds
+</ParamField>

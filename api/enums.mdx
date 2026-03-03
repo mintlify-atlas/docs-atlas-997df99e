@@ -1,0 +1,132 @@
+---
+title: Enums
+description: Enumeration types used throughout Gearbox Protocol Core V3
+---
+
+Gearbox Protocol uses several enums to represent different modes and actions throughout the system.
+
+## ManageDebtAction
+
+Debt management action type.
+
+```solidity
+enum ManageDebtAction {
+    INCREASE_DEBT,
+    DECREASE_DEBT
+}
+```
+
+### Values
+
+<ParamField path="INCREASE_DEBT" type="ManageDebtAction">
+  Borrows additional funds from the pool, updates account's debt and cumulative interest index
+</ParamField>
+
+<ParamField path="DECREASE_DEBT" type="ManageDebtAction">
+  Repays debt components in order: quota interest and fees → base interest and fees → debt principal. Updates all corresponding state variables (base interest index, quota interest and fees, debt). When repaying all debt, ensures that account has no enabled quotas.
+</ParamField>
+
+## CollateralCalcTask
+
+Collateral and debt calculation mode.
+
+```solidity
+enum CollateralCalcTask {
+    GENERIC_PARAMS,
+    DEBT_ONLY,
+    FULL_COLLATERAL_CHECK_LAZY,
+    DEBT_COLLATERAL,
+    DEBT_COLLATERAL_SAFE_PRICES
+}
+```
+
+### Values
+
+<ParamField path="GENERIC_PARAMS" type="CollateralCalcTask">
+  Returns generic data like account debt and cumulative indexes
+</ParamField>
+
+<ParamField path="DEBT_ONLY" type="CollateralCalcTask">
+  Same as GENERIC_PARAMS but includes more detailed debt info, like accrued base/quota interest and fees
+</ParamField>
+
+<ParamField path="FULL_COLLATERAL_CHECK_LAZY" type="CollateralCalcTask">
+  Checks whether account is sufficiently collateralized in a lazy fashion, i.e., it stops iterating over collateral tokens once TWV reaches the desired target. Since it may return underestimated TWV, it's only available for internal use.
+</ParamField>
+
+<ParamField path="DEBT_COLLATERAL" type="CollateralCalcTask">
+  Same as DEBT_ONLY but also returns total value and total LT-weighted value of account's tokens. This mode is used during account liquidation.
+</ParamField>
+
+<ParamField path="DEBT_COLLATERAL_SAFE_PRICES" type="CollateralCalcTask">
+  Same as DEBT_COLLATERAL but uses safe prices (minimum of main and reserve price feeds) from price oracle
+</ParamField>
+
+## AllowanceAction
+
+Token allowance action for configuration.
+
+```solidity
+enum AllowanceAction {
+    FORBID,
+    ALLOW
+}
+```
+
+### Values
+
+<ParamField path="FORBID" type="AllowanceAction">
+  Forbids a token, preventing it from being added to accounts or having quotas increased
+</ParamField>
+
+<ParamField path="ALLOW" type="AllowanceAction">
+  Allows a previously forbidden token
+</ParamField>
+
+## Usage Examples
+
+### Managing Debt
+
+```solidity
+// Increase debt
+creditManager.manageDebt(
+    creditAccount,
+    1000e6,
+    enabledTokensMask,
+    ManageDebtAction.INCREASE_DEBT
+);
+
+// Decrease debt
+creditManager.manageDebt(
+    creditAccount,
+    500e6,
+    enabledTokensMask,
+    ManageDebtAction.DECREASE_DEBT
+);
+```
+
+### Calculating Collateral
+
+```solidity
+// Get full debt and collateral data for liquidation
+CollateralDebtData memory cdd = creditManager.calcDebtAndCollateral(
+    creditAccount,
+    CollateralCalcTask.DEBT_COLLATERAL
+);
+
+// Use safe prices for withdrawals
+CollateralDebtData memory cddSafe = creditManager.calcDebtAndCollateral(
+    creditAccount,
+    CollateralCalcTask.DEBT_COLLATERAL_SAFE_PRICES
+);
+```
+
+### Token Allowance
+
+```solidity
+// Forbid a risky token
+creditFacade.setTokenAllowance(riskyToken, AllowanceAction.FORBID);
+
+// Re-allow it later
+creditFacade.setTokenAllowance(riskyToken, AllowanceAction.ALLOW);
+```

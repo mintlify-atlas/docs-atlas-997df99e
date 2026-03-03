@@ -1,0 +1,371 @@
+---
+title: "BitMask"
+description: "Library for efficient bit manipulation and set operations"
+---
+
+## Overview
+
+The `BitMask` library provides efficient bit manipulation functions for managing token sets in Gearbox Protocol. Bitmasks are used extensively to track enabled tokens on credit accounts and forbidden tokens in configurations, offering gas-efficient set operations.
+
+## Key Concepts
+
+**Bitmask Representation**: A `uint256` where the i-th bit represents the i-th item in a set:
+- Bit = 1: Item is in the set
+- Bit = 0: Item is not in the set
+
+**Token Masks**: Each token has a mask equal to `2**i` where `i` is the token's index:
+```solidity
+token0: 0x0001 (bit 0)
+token1: 0x0002 (bit 1)
+token2: 0x0004 (bit 2)
+token3: 0x0008 (bit 3)
+// ... up to 255 tokens
+```
+
+**Set Inclusion Check**:
+```solidity
+bool included = (tokenMask & enabledTokensMask) != 0;
+```
+
+<Info>
+Bitmasks allow checking if any token from a set is enabled using a single bitwise AND operation, making them extremely gas-efficient compared to array iterations.
+</Info>
+
+## Core Functions
+
+### calcEnabledTokens
+
+```solidity
+function calcEnabledTokens(
+    uint256 enabledTokensMask
+) internal pure returns (uint256 totalTokensEnabled)
+```
+
+Counts the number of `1` bits in a mask (population count).
+
+**Parameters:**
+- `enabledTokensMask` - The bitmask to count bits in
+
+**Returns:** Number of enabled tokens (bits set to 1)
+
+**Algorithm**: Brian Kernighan's algorithm
+```solidity
+while (mask > 0) {
+    mask &= mask - 1;  // Clears the lowest set bit
+    count++;
+}
+```
+
+<Note>
+This algorithm runs in O(k) where k is the number of set bits, not the total number of possible bits. For sparse masks, this is very efficient.
+</Note>
+
+### enable
+
+```solidity
+function enable(
+    uint256 enabledTokenMask,
+    uint256 bitsToEnable
+) internal pure returns (uint256)
+```
+
+Enables (sets to 1) specified bits in a mask.
+
+**Parameters:**
+- `enabledTokenMask` - Current mask
+- `bitsToEnable` - Mask of bits to enable
+
+**Returns:** Updated mask with specified bits enabled
+
+**Operation**: Bitwise OR
+```solidity
+return enabledTokenMask | bitsToEnable;
+```
+
+### disable
+
+```solidity
+function disable(
+    uint256 enabledTokenMask,
+    uint256 bitsToDisable
+) internal pure returns (uint256)
+```
+
+Disables (sets to 0) specified bits in a mask.
+
+**Parameters:**
+- `enabledTokenMask` - Current mask
+- `bitsToDisable` - Mask of bits to disable
+
+**Returns:** Updated mask with specified bits disabled
+
+**Operation**: Bitwise AND with complement
+```solidity
+return enabledTokenMask & ~bitsToDisable;
+```
+
+### enableDisable
+
+```solidity
+function enableDisable(
+    uint256 enabledTokensMask,
+    uint256 bitsToEnable,
+    uint256 bitsToDisable
+) internal pure returns (uint256)
+```
+
+Atomically enables and disables specified bits.
+
+**Parameters:**
+- `enabledTokensMask` - Current mask
+- `bitsToEnable` - Mask of bits to enable
+- `bitsToDisable` - Mask of bits to disable
+
+**Returns:** Updated mask with both operations applied
+
+**Operation**: Enable first, then disable
+```solidity
+return (enabledTokensMask | bitsToEnable) & (~bitsToDisable);
+```
+
+<Warning>
+Bits to enable are applied before bits to disable. If the same bit appears in both parameters, it will be disabled in the final result.
+</Warning>
+
+### lsbMask
+
+```solidity
+function lsbMask(
+    uint256 mask
+) internal pure returns (uint256)
+```
+
+Returns a mask with only the least significant bit (LSB) of the input mask.
+
+**Parameters:**
+- `mask` - Input mask
+
+**Returns:** Mask with only the lowest set bit enabled
+
+**Operation**: Two's complement trick
+```solidity
+return mask & uint256(-int256(mask));
+```
+
+<Info>
+This function is useful for iterating over set bits efficiently:
+```solidity
+while (mask != 0) {
+    uint256 currentBit = mask.lsbMask();
+    // Process currentBit
+    mask = mask.disable(currentBit);
+}
+```
+</Info>
+
+## Usage Examples
+
+### Basic Token Management
+
+```solidity
+import {BitMask} from "@gearbox-protocol/core-v3/contracts/libraries/BitMask.sol";
+
+contract TokenManager {
+    using BitMask for uint256;
+
+    uint256 public enabledTokensMask;
+
+    function enableToken(uint256 tokenMask) external {
+        enabledTokensMask = enabledTokensMask.enable(tokenMask);
+    }
+
+    function disableToken(uint256 tokenMask) external {
+        enabledTokensMask = enabledTokensMask.disable(tokenMask);
+    }
+
+    function isTokenEnabled(uint256 tokenMask) external view returns (bool) {
+        return (enabledTokensMask & tokenMask) != 0;
+    }
+
+    function countEnabledTokens() external view returns (uint256) {
+        return enabledTokensMask.calcEnabledTokens();
+    }
+}
+```
+
+### Iterating Over Enabled Tokens
+
+```solidity
+function processAllEnabledTokens(
+    uint256 enabledMask,
+    address[] memory allTokens
+) internal {
+    uint256 mask = enabledMask;
+    uint256 index = 0;
+
+    while (mask != 0) {
+        // Get the lowest set bit
+        uint256 currentTokenMask = mask.lsbMask();
+
+        // Find token index (log2 of mask)
+        uint256 tokenIndex = 0;
+        uint256 temp = currentTokenMask;
+        while (temp > 1) {
+            temp >>= 1;
+            tokenIndex++;
+        }
+
+        // Process token
+        address token = allTokens[tokenIndex];
+        // ... do something with token
+
+        // Remove processed bit
+        mask = mask.disable(currentTokenMask);
+    }
+}
+```
+
+### Batch Operations
+
+```solidity
+function updateTokens(
+    uint256 currentMask,
+    uint256 tokensToAdd,
+    uint256 tokensToRemove
+) external pure returns (uint256 newMask) {
+    // Atomically add and remove tokens
+    newMask = currentMask.enableDisable(tokensToAdd, tokensToRemove);
+
+    // Ensure we don't exceed maximum tokens
+    require(
+        newMask.calcEnabledTokens() <= 20,
+        "Too many enabled tokens"
+    );
+}
+```
+
+### Checking Multiple Tokens
+
+```solidity
+function hasAnyToken(
+    uint256 accountMask,
+    uint256 requiredTokensMask
+) external pure returns (bool) {
+    // Check if account has ANY of the required tokens
+    return (accountMask & requiredTokensMask) != 0;
+}
+
+function hasAllTokens(
+    uint256 accountMask,
+    uint256 requiredTokensMask
+) external pure returns (bool) {
+    // Check if account has ALL of the required tokens
+    return (accountMask & requiredTokensMask) == requiredTokensMask;
+}
+
+function hasForbiddenToken(
+    uint256 accountMask,
+    uint256 forbiddenTokensMask
+) external pure returns (bool) {
+    // Check if account has any forbidden token
+    return (accountMask & forbiddenTokensMask) != 0;
+}
+```
+
+## Bitmask Optimization Benefits
+
+### Gas Efficiency
+
+**Array Approach** (expensive):
+```solidity
+address[] enabledTokens;  // Storage array
+
+// Check if token is enabled: O(n) loop
+for (uint i = 0; i < enabledTokens.length; i++) {
+    if (enabledTokens[i] == token) return true;
+}
+```
+
+**Bitmask Approach** (cheap):
+```solidity
+uint256 enabledTokensMask;  // Single storage slot
+
+// Check if token is enabled: O(1) operation
+return (enabledTokensMask & tokenMask) != 0;
+```
+
+<Info>
+**Gas Savings**:
+- Checking token enabled: ~2,100 gas (array) vs ~100 gas (bitmask)
+- Adding token: ~20,000 gas (array) vs ~5,000 gas (bitmask)
+- Storage: 1 slot (bitmask) vs N slots (array)
+</Info>
+
+### Set Operations
+
+Bitmasks enable efficient set operations:
+
+```solidity
+// Union: tokens in A OR B
+uint256 union = maskA | maskB;
+
+// Intersection: tokens in A AND B
+uint256 intersection = maskA & maskB;
+
+// Difference: tokens in A but not in B
+uint256 difference = maskA & ~maskB;
+
+// Symmetric difference: tokens in A XOR B
+uint256 symDiff = maskA ^ maskB;
+```
+
+## Limitations
+
+<Warning>
+**Maximum Items**: A `uint256` has 256 bits, so you can track at most 256 different items (tokens) in a single mask. For most use cases, this is sufficient.
+</Warning>
+
+## Practical Example: Credit Account
+
+```solidity
+struct CreditAccount {
+    address owner;
+    uint256 debt;
+    uint256 enabledTokensMask;  // Tracks all tokens held
+}
+
+// Enable tokens when received
+function addCollateral(
+    CreditAccount storage account,
+    address token,
+    uint256 tokenMask
+) internal {
+    // Transfer token to account
+    // ...
+
+    // Mark token as enabled
+    account.enabledTokensMask = account.enabledTokensMask.enable(tokenMask);
+}
+
+// Disable tokens when balance reaches zero
+function removeCollateral(
+    CreditAccount storage account,
+    uint256 tokenMask
+) internal {
+    account.enabledTokensMask = account.enabledTokensMask.disable(tokenMask);
+}
+
+// Check if account holds any forbidden tokens
+function hasForbiddenTokens(
+    CreditAccount storage account,
+    uint256 forbiddenMask
+) internal view returns (bool) {
+    return (account.enabledTokensMask & forbiddenMask) != 0;
+}
+```
+
+## Related Libraries
+
+- [CollateralLogic](/contracts/libraries/collateral-logic) - Uses bitmasks for tracking enabled tokens
+- [CreditLogic](/contracts/libraries/credit-logic) - Works with collateral data that includes bitmasks
+- [Constants](/contracts/libraries/constants) - Defines `UNDERLYING_TOKEN_MASK = 1`

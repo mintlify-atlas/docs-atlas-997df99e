@@ -1,0 +1,277 @@
+---
+title: "QuotasLogic"
+description: "Library for quota interest calculations and quota management"
+---
+
+## Overview
+
+The `QuotasLogic` library handles interest calculations for quoted tokens in Gearbox Protocol V3. Unlike pool base interest which compounds, quota interest uses an additive (linear) accumulation model for gas efficiency.
+
+## Key Concepts
+
+**Quotas** allow credit accounts to hold tokens beyond the underlying asset. Each quoted token has:
+- A quota limit (maximum exposure)
+- A quota interest rate (annual rate in basis points)
+- An additive cumulative index (unlike compound interest)
+
+## Constants
+
+```solidity
+uint192 constant RAY_DIVIDED_BY_PERCENTAGE = uint192(RAY / PERCENTAGE_FACTOR);
+```
+
+Pre-computed constant for efficient interest calculations. Equals `10^27 / 10^4 = 10^23`.
+
+## Core Functions
+
+### cumulativeIndexSince
+
+```solidity
+function cumulativeIndexSince(
+    uint192 cumulativeIndexLU,
+    uint16 rate,
+    uint256 lastQuotaRateUpdate
+) internal view returns (uint192)
+```
+
+Computes the new additive cumulative index for quota interest.
+
+**Parameters:**
+- `cumulativeIndexLU` - Cumulative index at last update
+- `rate` - Annual quota interest rate in basis points (e.g., 500 = 5%)
+- `lastQuotaRateUpdate` - Timestamp of last quota rate update
+
+**Returns:** New cumulative index value
+
+**Formula:**
+```solidity
+newIndex = cumulativeIndexLU + (RAY / PERCENTAGE_FACTOR) * timeDelta * rate / SECONDS_PER_YEAR
+```
+
+<Info>
+Quota interest uses an **additive index** rather than a multiplicative one. This means interest grows linearly rather than compounding, which is more gas-efficient for managing multiple quoted tokens with different rates.
+</Info>
+
+### calcAccruedQuotaInterest
+
+```solidity
+function calcAccruedQuotaInterest(
+    uint96 quoted,
+    uint192 cumulativeIndexNow,
+    uint192 cumulativeIndexLU
+) internal pure returns (uint128)
+```
+
+Computes interest accrued on a quota since the last update.
+
+**Parameters:**
+- `quoted` - Quota amount (in underlying token units)
+- `cumulativeIndexNow` - Current cumulative index
+- `cumulativeIndexLU` - Cumulative index at last update
+
+**Returns:** Accrued interest amount
+
+**Formula:**
+```solidity
+interest = quoted * (cumulativeIndexNow - cumulativeIndexLU) / RAY
+```
+
+<Note>
+The function returns `uint128` which is safe because `quoted` is `uint96` and the index difference is bounded by reasonable time periods and interest rates.
+</Note>
+
+### calcQuotaRevenueChange
+
+```solidity
+function calcQuotaRevenueChange(
+    uint16 rate,
+    int256 change
+) internal pure returns (int256)
+```
+
+Computes the change in pool quota revenue given a rate and quota change.
+
+**Parameters:**
+- `rate` - Quota interest rate in basis points
+- `change` - Change in total quoted amount (can be negative for decreases)
+
+**Returns:** Change in annual quota revenue
+
+**Formula:**
+```solidity
+revenueChange = change * rate / PERCENTAGE_FACTOR
+```
+
+<Info>
+This function is used to update the pool's expected annual revenue when quotas are increased or decreased on credit accounts.
+</Info>
+
+### calcActualQuotaChange
+
+```solidity
+function calcActualQuotaChange(
+    uint96 totalQuoted,
+    uint96 limit,
+    int96 requestedChange
+) internal pure returns (int96 quotaChange)
+```
+
+Upper-bounds a requested quota increase to respect the total quota limit.
+
+**Parameters:**
+- `totalQuoted` - Current total quoted amount across all accounts
+- `limit` - Maximum total quota limit
+- `requestedChange` - Requested quota increase
+
+**Returns:** Actual quota change (capped at available capacity)
+
+<Warning>
+If `totalQuoted >= limit`, this function returns 0, preventing any quota increases. This ensures the protocol never exceeds configured exposure limits for quoted tokens.
+</Warning>
+
+## How Quota Interest Works
+
+### Additive vs Compound Interest
+
+**Compound Interest (Base Pool Debt):**
+```solidity
+debt_new = debt_old * (index_now / index_last)
+```
+
+**Additive Interest (Quotas):**
+```solidity
+interest = quota * (index_now - index_last) / RAY
+```
+
+### Why Additive?
+
+1. **Gas Efficiency**: Each quoted token can have a different rate. Additive indices are cheaper to calculate.
+2. **Simplicity**: Linear growth is easier to reason about and audit.
+3. **Safety**: No compounding means more predictable interest accrual.
+
+<Info>
+For typical quota rates (1-10% annually) over reasonable time periods, the difference between additive and compound interest is minimal, making the gas savings worthwhile.
+</Info>
+
+## Usage Example
+
+```solidity
+import {QuotasLogic} from "@gearbox-protocol/core-v3/contracts/libraries/QuotasLogic.sol";
+import {PERCENTAGE_FACTOR, RAY} from "@gearbox-protocol/core-v3/contracts/libraries/Constants.sol";
+
+contract QuotaManager {
+    struct QuotaData {
+        uint96 quota;
+        uint192 cumulativeIndex;
+        uint16 rate;
+        uint256 lastUpdate;
+    }
+
+    mapping(address => QuotaData) public quotas;
+
+    function accrueQuotaInterest(
+        address account
+    ) external returns (uint128 interest) {
+        QuotaData storage data = quotas[account];
+
+        // Update cumulative index
+        uint192 newIndex = QuotasLogic.cumulativeIndexSince(
+            data.cumulativeIndex,
+            data.rate,
+            data.lastUpdate
+        );
+
+        // Calculate accrued interest
+        interest = QuotasLogic.calcAccruedQuotaInterest(
+            data.quota,
+            newIndex,
+            data.cumulativeIndex
+        );
+
+        // Update storage
+        data.cumulativeIndex = newIndex;
+        data.lastUpdate = block.timestamp;
+    }
+
+    function increaseQuota(
+        address account,
+        int96 requestedIncrease,
+        uint96 totalQuoted,
+        uint96 limit
+    ) external returns (int96 actualIncrease) {
+        // Cap increase by available capacity
+        actualIncrease = QuotasLogic.calcActualQuotaChange(
+            totalQuoted,
+            limit,
+            requestedIncrease
+        );
+
+        if (actualIncrease > 0) {
+            QuotaData storage data = quotas[account];
+            data.quota += uint96(actualIncrease);
+
+            // Update pool revenue
+            int256 revenueChange = QuotasLogic.calcQuotaRevenueChange(
+                data.rate,
+                int256(actualIncrease)
+            );
+            // ... update pool state
+        }
+    }
+}
+```
+
+## Quota Interest Example
+
+```solidity
+// Initial state
+uint96 quota = 100_000e18; // 100k tokens
+uint16 rate = 500; // 5% annual rate
+uint192 indexLU = RAY; // Starting index
+uint256 lastUpdate = block.timestamp;
+
+// After 1 year
+uint192 indexNow = QuotasLogic.cumulativeIndexSince(
+    indexLU,
+    rate,
+    lastUpdate
+);
+// indexNow ≈ RAY + (RAY * 5 / 100)
+// indexNow ≈ 1.05e27
+
+uint128 interest = QuotasLogic.calcAccruedQuotaInterest(
+    quota,
+    indexNow,
+    indexLU
+);
+// interest ≈ 100_000e18 * 0.05e27 / 1e27
+// interest ≈ 5_000e18 (5k tokens)
+```
+
+## Quota Limits
+
+```solidity
+// Pool has 10M total quota limit for WBTC
+uint96 limit = 10_000_000e8;
+uint96 totalQuoted = 9_500_000e8;
+
+// User requests 1M increase
+int96 requested = 1_000_000e8;
+
+int96 actual = QuotasLogic.calcActualQuotaChange(
+    totalQuoted,
+    limit,
+    requested
+);
+// actual = 500_000e8 (capped at available capacity)
+```
+
+<Warning>
+Always use `calcActualQuotaChange` before applying quota increases to ensure protocol-wide limits are respected. Exceeding limits could lead to excessive exposure to quoted tokens.
+</Warning>
+
+## Related Libraries
+
+- [CreditLogic](/contracts/libraries/credit-logic) - Handles base interest with compound accumulation
+- [CollateralLogic](/contracts/libraries/collateral-logic) - Uses quotas for collateral calculations
+- [Constants](/contracts/libraries/constants) - Defines `RAY`, `PERCENTAGE_FACTOR`, and `SECONDS_PER_YEAR`

@@ -1,0 +1,100 @@
+---
+title: Credit Account V3
+description: Individual credit account contract that holds assets and executes operations
+---
+
+The Credit Account is a minimal contract that holds assets and executes operations on behalf of the borrower.
+
+## View Functions
+
+### factory
+
+```solidity
+function factory() external view returns (address)
+```
+
+Returns the address of the account factory.
+
+<ResponseField name="factory" type="address">
+  The account factory contract address
+</ResponseField>
+
+### creditManager
+
+```solidity
+function creditManager() external view returns (address)
+```
+
+Returns the address of the credit manager.
+
+<ResponseField name="creditManager" type="address">
+  The credit manager contract address
+</ResponseField>
+
+## Functions
+
+### safeTransfer
+
+```solidity
+function safeTransfer(
+    address token,
+    address to,
+    uint256 amount
+) external
+```
+
+Safely transfers tokens from the credit account.
+
+<ParamField path="token" type="address" required>
+  The token to transfer
+</ParamField>
+
+<ParamField path="to" type="address" required>
+  The recipient address
+</ParamField>
+
+<ParamField path="amount" type="uint256" required>
+  The amount to transfer
+</ParamField>
+
+### execute
+
+```solidity
+function execute(
+    address target,
+    bytes calldata data
+) external returns (bytes memory result)
+```
+
+Executes a call to an external contract.
+
+<ParamField path="target" type="address" required>
+  The target contract address
+</ParamField>
+
+<ParamField path="data" type="bytes" required>
+  The call data to send
+</ParamField>
+
+<ResponseField name="result" type="bytes">
+  The result of the external call
+</ResponseField>
+
+### rescue
+
+```solidity
+function rescue(
+    address target,
+    bytes calldata data
+) external
+```
+
+Rescues funds from the credit account (emergency function).
+
+<ParamField path="target" type="address" required>
+  The target contract address
+</ParamField>
+
+<ParamField path="data" type="bytes" required>
+  The call data to send
+</ParamField>
