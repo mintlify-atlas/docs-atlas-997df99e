@@ -1,0 +1,583 @@
+---
+title: 'IPoolQuotaKeeperV3'
+description: 'Interface for managing quota-based interest on tokens in Gearbox Protocol V3 pools'
+---
+
+## Overview
+
+The `IPoolQuotaKeeperV3` interface manages quota-based interest for specific tokens in pools. It tracks per-account quotas, accumulates interest, and configures quota parameters like rates, limits, and fees.
+
+## View Functions
+
+### pool
+
+```solidity
+function pool() external view returns (address)
+```
+
+Returns the address of the associated pool.
+
+<ResponseField name="address" type="address">
+  The pool contract address
+</ResponseField>
+
+### underlying
+
+```solidity
+function underlying() external view returns (address)
+```
+
+Returns the address of the pool's underlying asset.
+
+<ResponseField name="address" type="address">
+  The underlying token address
+</ResponseField>
+
+### getQuotaRate
+
+```solidity
+function getQuotaRate(address token) external view returns (uint16)
+```
+
+Returns the current quota interest rate for a token.
+
+<ParamField path="token" type="address" required>
+  The address of the token
+</ParamField>
+
+<ResponseField name="rate" type="uint16">
+  The quota interest rate in basis points per year
+</ResponseField>
+
+### cumulativeIndex
+
+```solidity
+function cumulativeIndex(address token) external view returns (uint192)
+```
+
+Returns the current cumulative quota interest index for a token.
+
+<ParamField path="token" type="address" required>
+  The address of the token
+</ParamField>
+
+<ResponseField name="index" type="uint192">
+  The cumulative interest index
+</ResponseField>
+
+### isQuotedToken
+
+```solidity
+function isQuotedToken(address token) external view returns (bool)
+```
+
+Checks if a token is registered as a quoted token.
+
+<ParamField path="token" type="address" required>
+  The address of the token to check
+</ParamField>
+
+<ResponseField name="isQuoted" type="bool">
+  True if the token is quoted, false otherwise
+</ResponseField>
+
+### getQuota
+
+```solidity
+function getQuota(address creditAccount, address token)
+    external
+    view
+    returns (uint96 quota, uint192 cumulativeIndexLU)
+```
+
+Returns the quota and last update index for a credit account's token.
+
+<ParamField path="creditAccount" type="address" required>
+  The address of the credit account
+</ParamField>
+
+<ParamField path="token" type="address" required>
+  The address of the token
+</ParamField>
+
+<ResponseField name="quota" type="uint96">
+  The current quota amount for the account
+</ResponseField>
+
+<ResponseField name="cumulativeIndexLU" type="uint192">
+  The cumulative index at last update
+</ResponseField>
+
+### getTokenQuotaParams
+
+```solidity
+function getTokenQuotaParams(address token)
+    external
+    view
+    returns (
+        uint16 rate,
+        uint192 cumulativeIndexLU,
+        uint16 quotaIncreaseFee,
+        uint96 totalQuoted,
+        uint96 limit,
+        bool isActive
+    )
+```
+
+Returns all quota parameters for a token.
+
+<ParamField path="token" type="address" required>
+  The address of the token
+</ParamField>
+
+<ResponseField name="rate" type="uint16">
+  The quota interest rate in basis points per year
+</ResponseField>
+
+<ResponseField name="cumulativeIndexLU" type="uint192">
+  The cumulative index at last update
+</ResponseField>
+
+<ResponseField name="quotaIncreaseFee" type="uint16">
+  The one-time fee charged on quota increases (in basis points)
+</ResponseField>
+
+<ResponseField name="totalQuoted" type="uint96">
+  The total amount of token currently quoted across all accounts
+</ResponseField>
+
+<ResponseField name="limit" type="uint96">
+  The maximum total quota allowed for this token
+</ResponseField>
+
+<ResponseField name="isActive" type="bool">
+  Whether the token is currently active for quotas
+</ResponseField>
+
+### getQuotaAndOutstandingInterest
+
+```solidity
+function getQuotaAndOutstandingInterest(address creditAccount, address token)
+    external
+    view
+    returns (uint96 quoted, uint128 outstandingInterest)
+```
+
+Returns the quota and outstanding interest for a credit account's token.
+
+<ParamField path="creditAccount" type="address" required>
+  The address of the credit account
+</ParamField>
+
+<ParamField path="token" type="address" required>
+  The address of the token
+</ParamField>
+
+<ResponseField name="quoted" type="uint96">
+  The current quota amount
+</ResponseField>
+
+<ResponseField name="outstandingInterest" type="uint128">
+  The outstanding quota interest accumulated since last update
+</ResponseField>
+
+### poolQuotaRevenue
+
+```solidity
+function poolQuotaRevenue() external view returns (uint256)
+```
+
+Returns the total quota revenue earned by the pool.
+
+<ResponseField name="revenue" type="uint256">
+  The total quota revenue amount
+</ResponseField>
+
+### lastQuotaRateUpdate
+
+```solidity
+function lastQuotaRateUpdate() external view returns (uint40)
+```
+
+Returns the timestamp of the last quota rate update.
+
+<ResponseField name="timestamp" type="uint40">
+  The unix timestamp of the last rate update
+</ResponseField>
+
+### gauge
+
+```solidity
+function gauge() external view returns (address)
+```
+
+Returns the address of the gauge contract that determines quota rates.
+
+<ResponseField name="address" type="address">
+  The gauge contract address
+</ResponseField>
+
+### creditManagers
+
+```solidity
+function creditManagers() external view returns (address[] memory)
+```
+
+Returns an array of all credit managers allowed to update quotas.
+
+<ResponseField name="managers" type="address[]">
+  Array of credit manager addresses
+</ResponseField>
+
+### quotedTokens
+
+```solidity
+function quotedTokens() external view returns (address[] memory)
+```
+
+Returns an array of all quoted tokens.
+
+<ResponseField name="tokens" type="address[]">
+  Array of quoted token addresses
+</ResponseField>
+
+## Quota Management Functions
+
+### updateQuota
+
+```solidity
+function updateQuota(
+    address creditAccount,
+    address token,
+    int96 requestedChange,
+    uint96 minQuota,
+    uint96 maxQuota
+)
+    external
+    returns (
+        uint128 caQuotaInterestChange,
+        uint128 fees,
+        bool enableToken,
+        bool disableToken
+    )
+```
+
+Updates the quota for a credit account's token, accruing interest and charging fees.
+
+<ParamField path="creditAccount" type="address" required>
+  The address of the credit account
+</ParamField>
+
+<ParamField path="token" type="address" required>
+  The address of the token
+</ParamField>
+
+<ParamField path="requestedChange" type="int96" required>
+  The requested change in quota (positive to increase, negative to decrease)
+</ParamField>
+
+<ParamField path="minQuota" type="uint96" required>
+  The minimum quota amount allowed after the update
+</ParamField>
+
+<ParamField path="maxQuota" type="uint96" required>
+  The maximum quota amount allowed after the update
+</ParamField>
+
+<ResponseField name="caQuotaInterestChange" type="uint128">
+  The change in quota interest for the credit account
+</ResponseField>
+
+<ResponseField name="fees" type="uint128">
+  The fees charged for the quota update
+</ResponseField>
+
+<ResponseField name="enableToken" type="bool">
+  Whether the token should be enabled on the credit account
+</ResponseField>
+
+<ResponseField name="disableToken" type="bool">
+  Whether the token should be disabled on the credit account
+</ResponseField>
+
+### removeQuotas
+
+```solidity
+function removeQuotas(
+    address creditAccount,
+    address[] calldata tokens,
+    bool setLimitsToZero
+) external
+```
+
+Removes quotas for multiple tokens from a credit account.
+
+<ParamField path="creditAccount" type="address" required>
+  The address of the credit account
+</ParamField>
+
+<ParamField path="tokens" type="address[]" required>
+  Array of token addresses to remove quotas for
+</ParamField>
+
+<ParamField path="setLimitsToZero" type="bool" required>
+  Whether to set the account's limits to zero after removal
+</ParamField>
+
+### accrueQuotaInterest
+
+```solidity
+function accrueQuotaInterest(
+    address creditAccount,
+    address[] calldata tokens
+) external
+```
+
+Accrues quota interest for multiple tokens on a credit account without changing quotas.
+
+<ParamField path="creditAccount" type="address" required>
+  The address of the credit account
+</ParamField>
+
+<ParamField path="tokens" type="address[]" required>
+  Array of token addresses to accrue interest for
+</ParamField>
+
+## Configuration Functions
+
+### setGauge
+
+```solidity
+function setGauge(address _gauge) external
+```
+
+Sets a new gauge contract for determining quota rates.
+
+<ParamField path="_gauge" type="address" required>
+  The address of the new gauge contract
+</ParamField>
+
+### addCreditManager
+
+```solidity
+function addCreditManager(address _creditManager) external
+```
+
+Allows a new credit manager to update quotas in this pool quota keeper.
+
+<ParamField path="_creditManager" type="address" required>
+  The address of the credit manager to add
+</ParamField>
+
+### addQuotaToken
+
+```solidity
+function addQuotaToken(address token) external
+```
+
+Adds a new token to the list of quoted tokens.
+
+<ParamField path="token" type="address" required>
+  The address of the token to add
+</ParamField>
+
+### updateRates
+
+```solidity
+function updateRates() external
+```
+
+Updates quota rates for all tokens by querying the gauge contract.
+
+### setTokenLimit
+
+```solidity
+function setTokenLimit(address token, uint96 limit) external
+```
+
+Sets a new total quota limit for a token.
+
+<ParamField path="token" type="address" required>
+  The address of the token
+</ParamField>
+
+<ParamField path="limit" type="uint96" required>
+  The new total quota limit
+</ParamField>
+
+### setTokenQuotaIncreaseFee
+
+```solidity
+function setTokenQuotaIncreaseFee(address token, uint16 fee) external
+```
+
+Sets a new one-time quota increase fee for a token.
+
+<ParamField path="token" type="address" required>
+  The address of the token
+</ParamField>
+
+<ParamField path="fee" type="uint16" required>
+  The new quota increase fee in basis points
+</ParamField>
+
+## Events
+
+### UpdateQuota
+
+```solidity
+event UpdateQuota(address indexed creditAccount, address indexed token, int96 quotaChange)
+```
+
+Emitted when an account's quota for a token is updated.
+
+<ResponseField name="creditAccount" type="address" indexed>
+  The address of the credit account
+</ResponseField>
+
+<ResponseField name="token" type="address" indexed>
+  The address of the token
+</ResponseField>
+
+<ResponseField name="quotaChange" type="int96">
+  The change in quota (positive for increase, negative for decrease)
+</ResponseField>
+
+### UpdateTokenQuotaRate
+
+```solidity
+event UpdateTokenQuotaRate(address indexed token, uint16 rate)
+```
+
+Emitted when a token's quota rate is updated.
+
+<ResponseField name="token" type="address" indexed>
+  The address of the token
+</ResponseField>
+
+<ResponseField name="rate" type="uint16">
+  The new quota interest rate in basis points per year
+</ResponseField>
+
+### SetGauge
+
+```solidity
+event SetGauge(address indexed newGauge)
+```
+
+Emitted when the gauge is updated.
+
+<ResponseField name="newGauge" type="address" indexed>
+  The address of the new gauge contract
+</ResponseField>
+
+### AddCreditManager
+
+```solidity
+event AddCreditManager(address indexed creditManager)
+```
+
+Emitted when a new credit manager is allowed.
+
+<ResponseField name="creditManager" type="address" indexed>
+  The address of the newly added credit manager
+</ResponseField>
+
+### AddQuotaToken
+
+```solidity
+event AddQuotaToken(address indexed token)
+```
+
+Emitted when a new token is added as quoted.
+
+<ResponseField name="token" type="address" indexed>
+  The address of the newly added quoted token
+</ResponseField>
+
+### SetTokenLimit
+
+```solidity
+event SetTokenLimit(address indexed token, uint96 limit)
+```
+
+Emitted when a new total quota limit is set for a token.
+
+<ResponseField name="token" type="address" indexed>
+  The address of the token
+</ResponseField>
+
+<ResponseField name="limit" type="uint96">
+  The new total quota limit
+</ResponseField>
+
+### SetQuotaIncreaseFee
+
+```solidity
+event SetQuotaIncreaseFee(address indexed token, uint16 fee)
+```
+
+Emitted when a new one-time quota increase fee is set for a token.
+
+<ResponseField name="token" type="address" indexed>
+  The address of the token
+</ResponseField>
+
+<ResponseField name="fee" type="uint16">
+  The new quota increase fee in basis points
+</ResponseField>
+
+## Structs
+
+### TokenQuotaParams
+
+```solidity
+struct TokenQuotaParams {
+    uint16 rate;
+    uint192 cumulativeIndexLU;
+    uint16 quotaIncreaseFee;
+    uint96 totalQuoted;
+    uint96 limit;
+}
+```
+
+Stores all quota parameters for a token.
+
+<ResponseField name="rate" type="uint16">
+  The quota interest rate in basis points per year
+</ResponseField>
+
+<ResponseField name="cumulativeIndexLU" type="uint192">
+  The cumulative interest index at last update
+</ResponseField>
+
+<ResponseField name="quotaIncreaseFee" type="uint16">
+  The one-time fee charged on quota increases (in basis points)
+</ResponseField>
+
+<ResponseField name="totalQuoted" type="uint96">
+  The total amount of token currently quoted across all accounts
+</ResponseField>
+
+<ResponseField name="limit" type="uint96">
+  The maximum total quota allowed for this token
+</ResponseField>
+
+### AccountQuota
+
+```solidity
+struct AccountQuota {
+    uint96 quota;
+    uint192 cumulativeIndexLU;
+}
+```
+
+Stores quota information for a credit account's token.
+
+<ResponseField name="quota" type="uint96">
+  The current quota amount for the account
+</ResponseField>
+
+<ResponseField name="cumulativeIndexLU" type="uint192">
+  The cumulative interest index at last update for this account
+</ResponseField>

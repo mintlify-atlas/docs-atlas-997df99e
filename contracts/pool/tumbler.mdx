@@ -1,0 +1,257 @@
+---
+title: "TumblerV3"
+description: "Admin-controlled alternative to Gauge for setting quota rates"
+---
+
+## Overview
+
+TumblerV3 is a simplified version of the GaugeV3 contract that allows configurators to set quota rates directly without requiring voting. Instead of relying on user votes to determine quota rates, TumblerV3 provides direct admin control with configurable epoch lengths.
+
+This contract is useful for pools where centralized rate management is preferred over decentralized governance, offering a more streamlined approach to quota rate adjustments.
+
+<Info>
+Unlike GaugeV3 which uses community voting, TumblerV3 allows configurators to set rates directly, making it ideal for pools that require quick rate adjustments or don't need decentralized governance.
+</Info>
+
+## Contract Details
+
+### Version and Type
+
+```solidity
+uint256 public constant version = 3_10;
+bytes32 public constant contractType = "RATE_KEEPER::TUMBLER";
+```
+
+### Immutable Properties
+
+<ParamField path="pool" type="address">
+  Pool whose quota rates are set by this contract
+</ParamField>
+
+<ParamField path="underlying" type="address">
+  Pool's underlying token
+</ParamField>
+
+<ParamField path="poolQuotaKeeper" type="address">
+  Pool's quota keeper. Stored as immutable because replacing the tumbler is simple since there are no user votes to migrate
+</ParamField>
+
+<ParamField path="epochLength" type="uint256">
+  Epoch length in seconds. Minimum time that must pass between rate updates
+</ParamField>
+
+## Constructor
+
+```solidity
+constructor(address pool_, uint256 epochLength_)
+```
+
+<ParamField path="pool_" type="address">
+  Pool whose rates to set by this contract
+</ParamField>
+
+<ParamField path="epochLength_" type="uint256">
+  Epoch length in seconds. Must not exceed `MAX_SANE_EPOCH_LENGTH`
+</ParamField>
+
+<Warning>
+Constructor reverts with `IncorrectParameterException` if epoch length exceeds the maximum sane value.
+</Warning>
+
+## View Functions
+
+### getTokens
+
+```solidity
+function getTokens() external view returns (address[] memory)
+```
+
+Returns all supported tokens that have quota rates configured in this tumbler.
+
+**Returns:**
+- Array of token addresses
+
+### getRates
+
+```solidity
+function getRates(address[] calldata tokens) external view returns (uint16[] memory rates)
+```
+
+Returns rates for a given list of tokens.
+
+<ParamField path="tokens" type="address[]">
+  Array of token addresses to get rates for
+</ParamField>
+
+**Returns:**
+- Array of rates corresponding to the input tokens
+
+<Warning>
+Reverts with `TokenIsNotQuotedException` if any of the tokens is not added to the tumbler.
+</Warning>
+
+### isTokenAdded
+
+```solidity
+function isTokenAdded(address token) external view returns (bool)
+```
+
+Checks whether a token is added to the tumbler.
+
+<ParamField path="token" type="address">
+  Token address to check
+</ParamField>
+
+**Returns:**
+- `true` if token is added, `false` otherwise
+
+### serialize
+
+```solidity
+function serialize() external view returns (bytes memory)
+```
+
+Returns serialized tumbler state including epoch length, tokens, and rates.
+
+**Returns:**
+- ABI-encoded tuple of `(epochLength, tokens, rates)`
+
+## State-Changing Functions
+
+### addToken
+
+```solidity
+function addToken(address token) external configuratorOnly nonZeroAddress(token)
+```
+
+Adds a token to the set of supported tokens and to the quota keeper (if not already there). Automatically sets the initial rate to 1.
+
+<ParamField path="token" type="address">
+  Token address to add
+</ParamField>
+
+**Access:** Configurator only
+
+**Reverts:**
+- `ZeroAddressException` if token is zero address
+- `TokenNotAllowedException` if token is the pool's underlying or already added
+
+### setRate
+
+```solidity
+function setRate(address token, uint16 rate) external configuratorOnly
+```
+
+Sets the quota rate for a token.
+
+<ParamField path="token" type="address">
+  Token address to set rate for
+</ParamField>
+
+<ParamField path="rate" type="uint16">
+  New quota rate (must be non-zero)
+</ParamField>
+
+**Access:** Configurator only
+
+**Reverts:**
+- `TokenIsNotQuotedException` if token is not added
+- `IncorrectParameterException` if rate is zero
+
+### updateRates
+
+```solidity
+function updateRates() external configuratorOnly
+```
+
+Updates rates in the quota keeper if time passed since the last update is greater than or equal to the epoch length. If called too early, the function returns without updating.
+
+**Access:** Configurator only
+
+<Note>
+This function silently returns if called before the epoch length has elapsed since the last update.
+</Note>
+
+## Events
+
+### AddToken
+
+```solidity
+event AddToken(address indexed token)
+```
+
+Emitted when a new token is added to the tumbler.
+
+<ParamField path="token" type="address">
+  Address of the added token
+</ParamField>
+
+### SetRate
+
+```solidity
+event SetRate(address indexed token, uint16 rate)
+```
+
+Emitted when a new quota rate is set for a token.
+
+<ParamField path="token" type="address">
+  Address of the token
+</ParamField>
+
+<ParamField path="rate" type="uint16">
+  New quota rate
+</ParamField>
+
+## Tumbler vs Gauge
+
+When deciding between TumblerV3 and GaugeV3, consider the following:
+
+### Use Tumbler When:
+- You need centralized control over quota rates
+- Quick rate adjustments are important
+- The pool doesn't require decentralized governance
+- You want to avoid the complexity of vote management
+- Migration scenarios are expected (no user votes to move)
+
+### Use Gauge When:
+- Community governance is preferred
+- Token holders should influence quota rates
+- Decentralized decision-making aligns with your protocol's values
+- You want to distribute control among stakeholders
+
+<Info>
+TumblerV3's quota keeper is immutable, unlike GaugeV3. This design choice is intentional because replacing a tumbler is simple when there are no user votes to migrate.
+</Info>
+
+## Usage Example
+
+```solidity
+// Deploy TumblerV3 for a pool with 1-day epochs
+TumblerV3 tumbler = new TumblerV3(
+    poolAddress,
+    86400 // 1 day in seconds
+);
+
+// Add tokens to the tumbler
+tumbler.addToken(usdcAddress); // Automatically sets rate to 1
+tumbler.addToken(wethAddress);
+
+// Set custom rates for tokens
+tumbler.setRate(usdcAddress, 500);  // 5% rate (basis points)
+tumbler.setRate(wethAddress, 1000); // 10% rate
+
+// Check token status
+bool isAdded = tumbler.isTokenAdded(usdcAddress); // true
+
+// Get all configured tokens
+address[] memory tokens = tumbler.getTokens();
+
+// Get rates for specific tokens
+address[] memory queryTokens = new address[](2);
+queryTokens[0] = usdcAddress;
+queryTokens[1] = wethAddress;
+uint16[] memory rates = tumbler.getRates(queryTokens);
+
+// Update rates in quota keeper (only if epoch has elapsed)
+tumbler.updateRates();
+```

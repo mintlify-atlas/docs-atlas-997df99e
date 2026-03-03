@@ -1,0 +1,586 @@
+---
+title: 'ICreditConfiguratorV3'
+description: 'Interface for configuring credit managers, including token management, adapter permissions, fees, and system upgrades'
+---
+
+## Overview
+
+The `ICreditConfiguratorV3` interface provides administrative functions for configuring credit managers in Gearbox Protocol V3. It handles collateral token management, adapter permissions, fee structures, and system upgrades.
+
+## View Functions
+
+### creditManager
+
+```solidity
+function creditManager() external view returns (address)
+```
+
+Returns the address of the associated credit manager.
+
+<ResponseField name="address" type="address">
+  The credit manager contract address
+</ResponseField>
+
+### creditFacade
+
+```solidity
+function creditFacade() external view returns (address)
+```
+
+Returns the address of the associated credit facade.
+
+<ResponseField name="address" type="address">
+  The credit facade contract address
+</ResponseField>
+
+### underlying
+
+```solidity
+function underlying() external view returns (address)
+```
+
+Returns the address of the underlying asset for this credit manager.
+
+<ResponseField name="address" type="address">
+  The underlying token address
+</ResponseField>
+
+### allowedAdapters
+
+```solidity
+function allowedAdapters() external view returns (address[] memory)
+```
+
+Returns an array of all currently allowed adapter addresses.
+
+<ResponseField name="adapters" type="address[]">
+  Array of allowed adapter contract addresses
+</ResponseField>
+
+## Token Management Functions
+
+### makeAllTokensQuoted
+
+```solidity
+function makeAllTokensQuoted() external
+```
+
+Marks all collateral tokens in the credit manager as quoted tokens in the pool quota keeper.
+
+### addCollateralToken
+
+```solidity
+function addCollateralToken(address token, uint16 liquidationThreshold) external
+```
+
+Adds a new token as recognizable collateral in the credit manager.
+
+<ParamField path="token" type="address" required>
+  The address of the token to add as collateral
+</ParamField>
+
+<ParamField path="liquidationThreshold" type="uint16" required>
+  The liquidation threshold for the token (in basis points, max 10000)
+</ParamField>
+
+### setLiquidationThreshold
+
+```solidity
+function setLiquidationThreshold(address token, uint16 liquidationThreshold) external
+```
+
+Sets a new liquidation threshold for a collateral token.
+
+<ParamField path="token" type="address" required>
+  The address of the collateral token
+</ParamField>
+
+<ParamField path="liquidationThreshold" type="uint16" required>
+  The new liquidation threshold (in basis points, max 10000)
+</ParamField>
+
+### rampLiquidationThreshold
+
+```solidity
+function rampLiquidationThreshold(
+    address token,
+    uint16 liquidationThresholdFinal,
+    uint40 rampStart,
+    uint24 rampDuration
+) external
+```
+
+Schedules a gradual ramping of a token's liquidation threshold over time.
+
+<ParamField path="token" type="address" required>
+  The address of the collateral token
+</ParamField>
+
+<ParamField path="liquidationThresholdFinal" type="uint16" required>
+  The final liquidation threshold after ramping completes
+</ParamField>
+
+<ParamField path="rampStart" type="uint40" required>
+  The timestamp when the ramping should start
+</ParamField>
+
+<ParamField path="rampDuration" type="uint24" required>
+  The duration of the ramping period in seconds
+</ParamField>
+
+### forbidToken
+
+```solidity
+function forbidToken(address token) external
+```
+
+Forbids a collateral token, preventing it from being enabled on new credit accounts.
+
+<ParamField path="token" type="address" required>
+  The address of the token to forbid
+</ParamField>
+
+### allowToken
+
+```solidity
+function allowToken(address token) external
+```
+
+Re-allows a previously forbidden collateral token.
+
+<ParamField path="token" type="address" required>
+  The address of the token to allow
+</ParamField>
+
+## Adapter Management Functions
+
+### allowAdapter
+
+```solidity
+function allowAdapter(address adapter) external
+```
+
+Allows a new adapter and its target contract in the credit manager.
+
+<ParamField path="adapter" type="address" required>
+  The address of the adapter contract to allow
+</ParamField>
+
+### forbidAdapter
+
+```solidity
+function forbidAdapter(address adapter) external
+```
+
+Forbids an adapter and its target contract in the credit manager.
+
+<ParamField path="adapter" type="address" required>
+  The address of the adapter contract to forbid
+</ParamField>
+
+## Fee Configuration Functions
+
+### setFees
+
+```solidity
+function setFees(
+    uint16 feeLiquidation,
+    uint16 liquidationPremium,
+    uint16 feeLiquidationExpired,
+    uint16 liquidationPremiumExpired
+) external
+```
+
+Sets new fee parameters in the credit manager.
+
+<ParamField path="feeLiquidation" type="uint16" required>
+  The fee charged on liquidations (in basis points)
+</ParamField>
+
+<ParamField path="liquidationPremium" type="uint16" required>
+  The premium discount given to liquidators (in basis points)
+</ParamField>
+
+<ParamField path="feeLiquidationExpired" type="uint16" required>
+  The fee charged on expired account liquidations (in basis points)
+</ParamField>
+
+<ParamField path="liquidationPremiumExpired" type="uint16" required>
+  The premium discount for expired account liquidations (in basis points)
+</ParamField>
+
+## Upgrade Functions
+
+### setPriceOracle
+
+```solidity
+function setPriceOracle(address newPriceOracle) external
+```
+
+Sets a new price oracle for the credit manager.
+
+<ParamField path="newPriceOracle" type="address" required>
+  The address of the new price oracle contract
+</ParamField>
+
+<Warning>
+Changing the price oracle is a critical operation that affects all collateral valuations.
+</Warning>
+
+### setCreditFacade
+
+```solidity
+function setCreditFacade(address newCreditFacade, bool migrateParams) external
+```
+
+Connects a new credit facade to the credit manager.
+
+<ParamField path="newCreditFacade" type="address" required>
+  The address of the new credit facade contract
+</ParamField>
+
+<ParamField path="migrateParams" type="bool" required>
+  Whether to migrate parameters from the old facade to the new one
+</ParamField>
+
+### upgradeCreditConfigurator
+
+```solidity
+function upgradeCreditConfigurator(address newCreditConfigurator) external
+```
+
+Upgrades the credit manager's configurator contract to a new implementation.
+
+<ParamField path="newCreditConfigurator" type="address" required>
+  The address of the new credit configurator contract
+</ParamField>
+
+## Credit Facade Configuration Functions
+
+### setDebtLimits
+
+```solidity
+function setDebtLimits(uint128 newMinDebt, uint128 newMaxDebt) external
+```
+
+Sets new debt principal limits for the credit facade.
+
+<ParamField path="newMinDebt" type="uint128" required>
+  The minimum debt principal amount allowed
+</ParamField>
+
+<ParamField path="newMaxDebt" type="uint128" required>
+  The maximum debt principal amount allowed
+</ParamField>
+
+### setMaxDebtPerBlockMultiplier
+
+```solidity
+function setMaxDebtPerBlockMultiplier(uint8 newMaxDebtLimitPerBlockMultiplier) external
+```
+
+Sets the multiplier for maximum debt that can be borrowed per block.
+
+<ParamField path="newMaxDebtLimitPerBlockMultiplier" type="uint8" required>
+  The new max debt per block multiplier
+</ParamField>
+
+### forbidBorrowing
+
+```solidity
+function forbidBorrowing() external
+```
+
+Forbids new borrowing by setting max debt to 0, effectively pausing the credit facade.
+
+### setLossPolicy
+
+```solidity
+function setLossPolicy(address newLossPolicy) external
+```
+
+Sets a new loss policy contract for handling bad debt.
+
+<ParamField path="newLossPolicy" type="address" required>
+  The address of the new loss policy contract
+</ParamField>
+
+### setExpirationDate
+
+```solidity
+function setExpirationDate(uint40 newExpirationDate) external
+```
+
+Sets a new expiration timestamp in the credit facade.
+
+<ParamField path="newExpirationDate" type="uint40" required>
+  The new expiration timestamp (unix timestamp)
+</ParamField>
+
+## Events
+
+### Token Events
+
+#### AddCollateralToken
+
+```solidity
+event AddCollateralToken(address indexed token)
+```
+
+Emitted when a token is made recognizable as collateral in the credit manager.
+
+<ResponseField name="token" type="address" indexed>
+  The address of the added collateral token
+</ResponseField>
+
+#### SetTokenLiquidationThreshold
+
+```solidity
+event SetTokenLiquidationThreshold(address indexed token, uint16 liquidationThreshold)
+```
+
+Emitted when a new collateral token liquidation threshold is set.
+
+<ResponseField name="token" type="address" indexed>
+  The address of the collateral token
+</ResponseField>
+
+<ResponseField name="liquidationThreshold" type="uint16">
+  The new liquidation threshold value
+</ResponseField>
+
+#### ScheduleTokenLiquidationThresholdRamp
+
+```solidity
+event ScheduleTokenLiquidationThresholdRamp(
+    address indexed token,
+    uint16 liquidationThresholdInitial,
+    uint16 liquidationThresholdFinal,
+    uint40 timestampRampStart,
+    uint40 timestampRampEnd
+)
+```
+
+Emitted when a collateral token liquidation threshold ramping is scheduled.
+
+<ResponseField name="token" type="address" indexed>
+  The address of the collateral token
+</ResponseField>
+
+<ResponseField name="liquidationThresholdInitial" type="uint16">
+  The initial liquidation threshold at ramp start
+</ResponseField>
+
+<ResponseField name="liquidationThresholdFinal" type="uint16">
+  The final liquidation threshold at ramp end
+</ResponseField>
+
+<ResponseField name="timestampRampStart" type="uint40">
+  The timestamp when ramping starts
+</ResponseField>
+
+<ResponseField name="timestampRampEnd" type="uint40">
+  The timestamp when ramping ends
+</ResponseField>
+
+#### ForbidToken
+
+```solidity
+event ForbidToken(address indexed token)
+```
+
+Emitted when a collateral token is forbidden.
+
+<ResponseField name="token" type="address" indexed>
+  The address of the forbidden token
+</ResponseField>
+
+#### AllowToken
+
+```solidity
+event AllowToken(address indexed token)
+```
+
+Emitted when a previously forbidden collateral token is allowed.
+
+<ResponseField name="token" type="address" indexed>
+  The address of the allowed token
+</ResponseField>
+
+### Adapter Events
+
+#### AllowAdapter
+
+```solidity
+event AllowAdapter(address indexed targetContract, address indexed adapter)
+```
+
+Emitted when a new adapter and its target contract are allowed in the credit manager.
+
+<ResponseField name="targetContract" type="address" indexed>
+  The address of the target contract the adapter interacts with
+</ResponseField>
+
+<ResponseField name="adapter" type="address" indexed>
+  The address of the allowed adapter
+</ResponseField>
+
+#### ForbidAdapter
+
+```solidity
+event ForbidAdapter(address indexed targetContract, address indexed adapter)
+```
+
+Emitted when an adapter and its target contract are forbidden in the credit manager.
+
+<ResponseField name="targetContract" type="address" indexed>
+  The address of the target contract
+</ResponseField>
+
+<ResponseField name="adapter" type="address" indexed>
+  The address of the forbidden adapter
+</ResponseField>
+
+### Credit Manager Events
+
+#### UpdateFees
+
+```solidity
+event UpdateFees(
+    uint16 feeLiquidation,
+    uint16 liquidationPremium,
+    uint16 feeLiquidationExpired,
+    uint16 liquidationPremiumExpired
+)
+```
+
+Emitted when new fee parameters are set in the credit manager.
+
+<ResponseField name="feeLiquidation" type="uint16">
+  The new liquidation fee
+</ResponseField>
+
+<ResponseField name="liquidationPremium" type="uint16">
+  The new liquidation premium
+</ResponseField>
+
+<ResponseField name="feeLiquidationExpired" type="uint16">
+  The new expired liquidation fee
+</ResponseField>
+
+<ResponseField name="liquidationPremiumExpired" type="uint16">
+  The new expired liquidation premium
+</ResponseField>
+
+### Upgrade Events
+
+#### SetPriceOracle
+
+```solidity
+event SetPriceOracle(address indexed priceOracle)
+```
+
+Emitted when a new price oracle is set in the credit manager.
+
+<ResponseField name="priceOracle" type="address" indexed>
+  The address of the new price oracle
+</ResponseField>
+
+#### SetCreditFacade
+
+```solidity
+event SetCreditFacade(address indexed creditFacade)
+```
+
+Emitted when a new facade is connected to the credit manager.
+
+<ResponseField name="creditFacade" type="address" indexed>
+  The address of the new credit facade
+</ResponseField>
+
+#### CreditConfiguratorUpgraded
+
+```solidity
+event CreditConfiguratorUpgraded(address indexed creditConfigurator)
+```
+
+Emitted when the credit manager's configurator contract is upgraded.
+
+<ResponseField name="creditConfigurator" type="address" indexed>
+  The address of the new credit configurator
+</ResponseField>
+
+### Credit Facade Events
+
+#### SetBorrowingLimits
+
+```solidity
+event SetBorrowingLimits(uint256 minDebt, uint256 maxDebt)
+```
+
+Emitted when new debt principal limits are set.
+
+<ResponseField name="minDebt" type="uint256">
+  The new minimum debt amount
+</ResponseField>
+
+<ResponseField name="maxDebt" type="uint256">
+  The new maximum debt amount
+</ResponseField>
+
+#### SetMaxDebtPerBlockMultiplier
+
+```solidity
+event SetMaxDebtPerBlockMultiplier(uint8 maxDebtPerBlockMultiplier)
+```
+
+Emitted when a new max debt per block multiplier is set.
+
+<ResponseField name="maxDebtPerBlockMultiplier" type="uint8">
+  The new multiplier value
+</ResponseField>
+
+#### SetLossPolicy
+
+```solidity
+event SetLossPolicy(address indexed lossPolicy)
+```
+
+Emitted when a new loss policy is set.
+
+<ResponseField name="lossPolicy" type="address" indexed>
+  The address of the new loss policy contract
+</ResponseField>
+
+#### SetExpirationDate
+
+```solidity
+event SetExpirationDate(uint40 expirationDate)
+```
+
+Emitted when a new expiration timestamp is set in the credit facade.
+
+<ResponseField name="expirationDate" type="uint40">
+  The new expiration timestamp
+</ResponseField>
+
+## Enums
+
+### AllowanceAction
+
+```solidity
+enum AllowanceAction {
+    FORBID,
+    ALLOW
+}
+```
+
+Defines whether to forbid or allow a token or adapter.
+
+<ResponseField name="FORBID" type="uint8" value="0">
+  Forbid the token or adapter
+</ResponseField>
+
+<ResponseField name="ALLOW" type="uint8" value="1">
+  Allow the token or adapter
+</ResponseField>

@@ -72,7 +72,8 @@
               "contracts/pool/pool",
               "contracts/pool/pool-quota-keeper",
               "contracts/pool/interest-rate-model",
-              "contracts/pool/gauge"
+              "contracts/pool/gauge",
+              "contracts/pool/tumbler"
             ]
           },
           {
@@ -106,7 +107,10 @@
               "api/credit-manager",
               "api/credit-facade",
               "api/credit-account",
+              "api/credit-configurator",
               "api/pool",
+              "api/pool-quota-keeper",
+              "api/tumbler",
               "api/price-oracle"
             ]
           },

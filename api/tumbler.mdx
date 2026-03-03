@@ -1,0 +1,164 @@
+---
+title: 'ITumblerV3'
+description: 'Interface for managing quota interest rates across multiple tokens in Gearbox Protocol V3'
+---
+
+## Overview
+
+The `ITumblerV3` interface provides functionality for managing quota interest rates for multiple tokens. It serves as a rate keeper that can update rates periodically based on epochs and communicates with the pool quota keeper to apply these rates.
+
+## View Functions
+
+### underlying
+
+```solidity
+function underlying() external view returns (address)
+```
+
+Returns the address of the underlying asset.
+
+<ResponseField name="address" type="address">
+  The underlying token address
+</ResponseField>
+
+### poolQuotaKeeper
+
+```solidity
+function poolQuotaKeeper() external view returns (address)
+```
+
+Returns the address of the associated pool quota keeper.
+
+<ResponseField name="address" type="address">
+  The pool quota keeper contract address
+</ResponseField>
+
+### epochLength
+
+```solidity
+function epochLength() external view returns (uint256)
+```
+
+Returns the length of each epoch in seconds.
+
+<ResponseField name="length" type="uint256">
+  The epoch length in seconds
+</ResponseField>
+
+<Note>
+Epochs are used to determine when rate updates should occur.
+</Note>
+
+### getTokens
+
+```solidity
+function getTokens() external view returns (address[] memory)
+```
+
+Returns an array of all tokens managed by this tumbler.
+
+<ResponseField name="tokens" type="address[]">
+  Array of token addresses
+</ResponseField>
+
+### getRates
+
+```solidity
+function getRates(address[] calldata tokens) external view returns (uint16[] memory)
+```
+
+Returns the quota interest rates for multiple tokens.
+
+<ParamField path="tokens" type="address[]" required>
+  Array of token addresses to query
+</ParamField>
+
+<ResponseField name="rates" type="uint16[]">
+  Array of quota interest rates in basis points per year, corresponding to the input tokens
+</ResponseField>
+
+## State-Changing Functions
+
+### setRate
+
+```solidity
+function setRate(address token, uint16 rate) external
+```
+
+Sets a new quota interest rate for a specific token.
+
+<ParamField path="token" type="address" required>
+  The address of the token
+</ParamField>
+
+<ParamField path="rate" type="uint16" required>
+  The new quota interest rate in basis points per year
+</ParamField>
+
+<Note>
+This function is typically restricted to authorized administrators.
+</Note>
+
+### updateRates
+
+```solidity
+function updateRates() external
+```
+
+Updates quota rates in the pool quota keeper for all managed tokens.
+
+<Note>
+This function is typically called periodically at the end of each epoch to synchronize rates with the pool quota keeper.
+</Note>
+
+## Events
+
+### AddToken
+
+```solidity
+event AddToken(address indexed token)
+```
+
+Emitted when a new token is added to the tumbler.
+
+<ResponseField name="token" type="address" indexed>
+  The address of the newly added token
+</ResponseField>
+
+### SetRate
+
+```solidity
+event SetRate(address indexed token, uint16 rate)
+```
+
+Emitted when a new quota rate is set for a token.
+
+<ResponseField name="token" type="address" indexed>
+  The address of the token
+</ResponseField>
+
+<ResponseField name="rate" type="uint16">
+  The new quota interest rate in basis points per year
+</ResponseField>
+
+## Inherited Interfaces
+
+### IRateKeeper
+
+The tumbler implements the `IRateKeeper` interface, which provides the core rate management functionality.
+
+### IACLTrait
+
+The tumbler implements the `IACLTrait` interface for access control, ensuring only authorized addresses can modify rates and configuration.
+
+## Usage Example
+
+The tumbler is typically used in the following workflow:
+
+1. Administrator sets quota rates for tokens using `setRate`
+2. At the end of each epoch, `updateRates` is called to synchronize rates with the pool quota keeper
+3. The pool quota keeper applies these rates when calculating quota interest for credit accounts
+
+<Note>
+Rates are expressed in basis points per year. For example, a rate of 500 represents 5% annual interest.
+</Note>
