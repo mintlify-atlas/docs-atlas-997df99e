@@ -1,0 +1,155 @@
+{
+  "projectType": "sdk-library",
+  "projectName": "Gearbox Protocol Core V3",
+  "projectDescription": "Smart contract protocol providing onchain credit and composable leverage for DeFi applications",
+  "theme": "aspen",
+  "primaryColor": "#0066FF",
+  "lightColor": "#3385FF",
+  "darkColor": "#0052CC",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/architecture",
+              "concepts/credit-accounts",
+              "concepts/pools",
+              "concepts/collateral-debt",
+              "concepts/quotas",
+              "concepts/liquidations"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/integration",
+              "guides/opening-credit-account",
+              "guides/managing-debt",
+              "guides/working-with-adapters",
+              "guides/price-oracles"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Smart Contracts",
+        "groups": [
+          {
+            "group": "Credit System",
+            "pages": [
+              "contracts/credit/credit-manager",
+              "contracts/credit/credit-facade",
+              "contracts/credit/credit-account",
+              "contracts/credit/credit-configurator"
+            ]
+          },
+          {
+            "group": "Pool System",
+            "pages": [
+              "contracts/pool/pool",
+              "contracts/pool/pool-quota-keeper",
+              "contracts/pool/interest-rate-model",
+              "contracts/pool/gauge"
+            ]
+          },
+          {
+            "group": "Core Infrastructure",
+            "pages": [
+              "contracts/core/price-oracle",
+              "contracts/core/account-factory",
+              "contracts/core/bot-list",
+              "contracts/core/gear-staking",
+              "contracts/core/loss-policy"
+            ]
+          },
+          {
+            "group": "Libraries",
+            "pages": [
+              "contracts/libraries/credit-logic",
+              "contracts/libraries/collateral-logic",
+              "contracts/libraries/quotas-logic",
+              "contracts/libraries/bitmask",
+              "contracts/libraries/constants"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Core Interfaces",
+            "pages": [
+              "api/credit-manager",
+              "api/credit-facade",
+              "api/credit-account",
+              "api/pool",
+              "api/price-oracle"
+            ]
+          },
+          {
+            "group": "Data Structures",
+            "pages": [
+              "api/structs/collateral-debt-data",
+              "api/structs/credit-account-info",
+              "api/structs/multicall",
+              "api/enums"
+            ]
+          },
+          {
+            "group": "Events & Errors",
+            "pages": [
+              "api/events",
+              "api/exceptions"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Credit Account abstraction for composable leverage",
+    "ERC-4626 compliant lending pools",
+    "Multi-collateral debt management with LT ramping",
+    "Quota-based borrowing system",
+    "Integrated price oracle with safe price feeds",
+    "Partial and full liquidation mechanisms",
+    "Adapter system for DeFi protocol integration",
+    "Gas-optimized bitmask collateral tracking"
+  ],
+  "publicApiSurface": [
+    "ICreditManagerV3.openCreditAccount",
+    "ICreditManagerV3.closeCreditAccount",
+    "ICreditManagerV3.liquidateCreditAccount",
+    "ICreditManagerV3.manageDebt",
+    "ICreditManagerV3.addCollateral",
+    "ICreditManagerV3.withdrawCollateral",
+    "ICreditManagerV3.calcDebtAndCollateral",
+    "ICreditFacadeV3.openCreditAccount",
+    "ICreditFacadeV3.closeCreditAccount",
+    "ICreditFacadeV3.liquidateCreditAccount",
+    "ICreditFacadeV3.multicall",
+    "ICreditFacadeV3.addCollateral",
+    "ICreditFacadeV3.withdrawCollateral",
+    "IPoolV3.deposit",
+    "IPoolV3.withdraw",
+    "IPoolV3.lendCreditAccount",
+    "IPoolV3.repayCreditAccount",
+    "IPriceOracleV3.getPrice",
+    "IPriceOracleV3.convertToUSD",
+    "IPriceOracleV3.convertFromUSD",
+    "IPoolQuotaKeeperV3.updateRates",
+    "IPoolQuotaKeeperV3.accrueQuotaInterest"
+  ]
+}
